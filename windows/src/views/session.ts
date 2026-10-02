@@ -3,7 +3,9 @@
 // added ones in green) and under it the last command with what it printed — next
 // to Mochi and the phases of the turn.
 //
-// Everything comes from the hooks. `tool_input` carries the edit itself; the
+// Every session keeps its own data, keyed by its session id: with several running
+// at once the view shows the one that was active last, and a new prompt in another
+// session cannot wipe it. Everything comes from the hooks. `tool_input` carries the edit itself; the
 // surrounding lines are read from the file by Rust (snippet.rs), the last lines a
 // command printed arrive in `tool_tail`. All text goes in as text nodes: a file's
 // content is not ours to trust as HTML.
@@ -33,6 +35,12 @@ export interface CommandShown {
 export type Phase = "read" | "edit" | "bash";
 
 export interface SessionData {
+  /** The project's name, from the folder the session started in. */
+  project: string;
+  /** That folder: files are shown relative to it and read from inside it, however often the shell `cd`s. */
+  root: string;
+  /** When the session last did anything (epoch ms), to pick the active one. */
+  touchedAt: number;
   edit?: EditShown;
   command?: CommandShown;
   /** Which of Read / Edit / Bash this turn has used, and which it is in now. */
@@ -42,7 +50,6 @@ export interface SessionData {
 }
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
-const fresh = (): SessionData => ({ seen: [], current: null, finished: false });
 
 const PHASE_OF: Record<string, Phase> = {
   Read: "read", Glob: "read", Grep: "read", LS: "read", WebFetch: "read", WebSearch: "read",
@@ -50,28 +57,56 @@ const PHASE_OF: Record<string, Phase> = {
   Bash: "bash", PowerShell: "bash",
 };
 
-/** A new prompt starts a new turn: the old turn's code and phases go. */
-export function beginTurn() {
-  const t = State.claudeTask;
-  if (t) t.session = fresh();
+/** Sessions that did nothing for this long are forgotten (a session that never sent Stop or SessionEnd). */
+const FORGET_AFTER_MS = 30 * 60_000;
+
+const sessions = new Map<string, SessionData>();
+
+/** The session's data, created on its first event. `cwd` of that event is its root. */
+function sessionFor(id: string, cwd: string, project: string): SessionData {
+  let s = sessions.get(id);
+  if (!s) {
+    s = { project, root: cwd, touchedAt: 0, seen: [], current: null, finished: false };
+    sessions.set(id, s);
+  }
+  s.touchedAt = Date.now();
+  for (const [other, o] of sessions) if (s.touchedAt - o.touchedAt > FORGET_AFTER_MS) sessions.delete(other);
+  return s;
 }
 
-export function endTurn() {
-  const s = State.claudeTask?.session;
+/** The session the view shows: the last active one that has something to show. */
+function active(): SessionData | null {
+  let best: SessionData | null = null;
+  for (const s of sessions.values()) {
+    if ((s.edit || s.command) && (!best || s.touchedAt > best.touchedAt)) best = s;
+  }
+  return best;
+}
+
+/** A new prompt starts a new turn of that session: its old code and phases go. */
+export function beginTurn(id: string, cwd: string, project: string) {
+  const s = sessionFor(id, cwd, project);
+  Object.assign(s, { edit: undefined, command: undefined, seen: [], current: null, finished: false });
+}
+
+export function endTurn(id: string) {
+  const s = sessions.get(id);
   if (s) s.finished = true;
 }
 
-/** True once the turn has shown something worth a view of its own. */
+/** The session is over (or its finished view has been shown long enough). */
+export function dropSession(id: string) {
+  sessions.delete(id);
+}
+
+/** True once some session has shown something worth a view of its own. */
 export function hasSession(): boolean {
-  const s = State.claudeTask?.session;
-  return !!s && !!(s.edit || s.command);
+  return active() !== null;
 }
 
 /** A tool is about to run: note it, and what the session view will show of it. */
-export function toolStarted(tool: string, input: Record<string, unknown>, cwd: string) {
-  const t = State.claudeTask;
-  if (!t) return;
-  const s = (t.session ??= fresh());
+export function toolStarted(id: string, tool: string, input: Record<string, unknown>, cwd: string, project: string) {
+  const s = sessionFor(id, cwd, project);
   s.finished = false;
   const phase = PHASE_OF[tool];
   if (phase) {
@@ -79,8 +114,7 @@ export function toolStarted(tool: string, input: Record<string, unknown>, cwd: s
     if (!s.seen.includes(phase)) s.seen.push(phase);
   }
 
-  const abs = str(input.file_path);
-  const file = cwd && abs.startsWith(cwd + "/") ? abs.slice(cwd.length + 1) : abs;
+  const file = relativeTo(str(input.file_path), s.root, cwd);
   switch (tool) {
     case "Edit":
       s.edit = { kind: "edit", file, removed: str(input.old_string), added: str(input.new_string) };
@@ -101,14 +135,23 @@ export function toolStarted(tool: string, input: Record<string, unknown>, cwd: s
   }
 }
 
+/** `abs` relative to the session's folder, else to the shell's current one, else as it is. */
+function relativeTo(abs: string, root: string, cwd: string): string {
+  for (const base of [root, cwd]) {
+    if (base && abs.startsWith(base + "/")) return abs.slice(base.length + 1);
+  }
+  return abs;
+}
+
 /** A tool finished (or failed): fill in what only exists afterwards. */
 export function toolFinished(
+  id: string,
   tool: string,
   input: Record<string, unknown>,
   cwd: string,
   extra: { tail?: string[]; failed?: boolean; error?: string },
 ) {
-  const s = State.claudeTask?.session;
+  const s = sessions.get(id);
   if (!s) return;
   if ((tool === "Bash" || tool === "PowerShell") && s.command) {
     s.command.status = extra.failed ? "failed" : "ok";
@@ -116,9 +159,12 @@ export function toolFinished(
     State.notify();
   } else if (tool === "Edit" && s.edit?.kind === "edit" && !extra.failed && s.edit.added) {
     const edit = s.edit;
-    void Bridge.fileSnippet(cwd, str(input.file_path), edit.added, 3).then((snip) => {
+    const path = str(input.file_path);
+    // Read from inside the session's folder; the shell's folder only if the file is not in it.
+    const inRoot = s.root && path.startsWith(s.root + "/");
+    void Bridge.fileSnippet(inRoot ? s.root : cwd, path, edit.added, 3).then((snip) => {
       // Only if it is still the edit this answer belongs to.
-      if (snip && State.claudeTask?.session?.edit === edit) {
+      if (snip && sessions.get(id)?.edit === edit) {
         edit.snippet = snip;
         State.notify();
       }
@@ -300,16 +346,15 @@ export function buildSession(actions: ViewActions): ViewHost {
   return {
     el,
     sync() {
-      const task = State.claudeTask;
-      const s = task?.session;
-      if (!task || !s) return;
-      const next = JSON.stringify([task.name, s]);
+      const s = active();
+      if (!s) return;
+      const next = JSON.stringify(s);
       if (next === key) return;
       key = next;
 
       clear(left);
       left.append(
-        h("div", { class: "sess-name" }, dot(task.color, 7), h("span", { text: task.name })),
+        h("div", { class: "sess-name" }, dot(State.claudeTask?.color ?? "#ffffff", 7), h("span", { text: s.project })),
         h("div", { class: "sess-tool" },
           h("span", { text: "Claude Code" }),
           h("button", { class: "sess-back", title: "Back", onclick: () => actions.setView("overview") }, fa("compress", 11)),

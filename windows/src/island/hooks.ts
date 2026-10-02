@@ -8,7 +8,7 @@ import { localized } from "../core/i18n";
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import type { Island } from "./island";
-import { beginTurn, endTurn, toolFinished, toolStarted } from "../views/session";
+import { beginTurn, dropSession, endTurn, hasSession, toolFinished, toolStarted } from "../views/session";
 
 const CLAUDE_ID = "integration_claude";
 
@@ -146,7 +146,6 @@ function clearSession() {
   t.stepIndex = 0;
   t.name = "VS Code";
   t.pillBadge = null;
-  t.session = null;
 }
 
 export function registerHookHandlers(island: Island) {
@@ -171,6 +170,7 @@ function handleHook(island: Island, payload: HookPayload) {
 
   const name = payload.hook_event_name ?? "";
   const cwd = payload.cwd ?? "";
+  const sessionId = payload.session_id ?? "";
   noteTerminal(payload);
   const raw = lastPathComponent(cwd);
   const projectName = aliasProjectName(raw || "Session");
@@ -217,9 +217,9 @@ function handleHook(island: Island, payload: HookPayload) {
       const asked = payload.prompt ?? payload.message;
       if (asked) State.appendStep(agentId, asked.slice(0, 60));
       if (!isExternalAgent) {
-        beginTurn();
-        // The new turn has shown nothing yet, so an editor view would be empty.
-        if (State.view === "session") island.setView(State.defaultView());
+        beginTurn(sessionId, cwd, projectName);
+        // The new turn has shown nothing yet; if no other session has, the editor view would be empty.
+        if (State.view === "session" && !hasSession()) island.setView(State.defaultView());
       }
       surface("overview", false);
       break;
@@ -231,7 +231,7 @@ function handleHook(island: Island, payload: HookPayload) {
       const tool = payload.tool_name ?? "Tool";
       State.appendStep(agentId, stepLabel(tool, payload.tool_input ?? {}));
       // What the editor view shows is kept up to date; opening it is the user's click.
-      if (!isExternalAgent) toolStarted(tool, payload.tool_input ?? {}, cwd);
+      if (!isExternalAgent) toolStarted(sessionId, tool, payload.tool_input ?? {}, cwd, projectName);
       surface("overview", false);
       break;
     }
@@ -239,7 +239,7 @@ function handleHook(island: Island, payload: HookPayload) {
     case "PostToolUse":
       State.updateTask(agentId, "working");
       if (!isExternalAgent) {
-        toolFinished(payload.tool_name ?? "", payload.tool_input ?? {}, cwd, { tail: payload.tool_tail });
+        toolFinished(sessionId, payload.tool_name ?? "", payload.tool_input ?? {}, cwd, { tail: payload.tool_tail });
       }
       break;
 
@@ -247,7 +247,7 @@ function handleHook(island: Island, payload: HookPayload) {
       State.updateTask(agentId, "working");
       State.appendStep(agentId, "⚠ failed");
       if (!isExternalAgent) {
-        toolFinished(payload.tool_name ?? "", payload.tool_input ?? {}, cwd, { failed: true, error: payload.error });
+        toolFinished(sessionId, payload.tool_name ?? "", payload.tool_input ?? {}, cwd, { failed: true, error: payload.error });
       }
       break;
 
@@ -265,7 +265,7 @@ function handleHook(island: Island, payload: HookPayload) {
     }
 
     case "Stop":
-      if (!isExternalAgent) endTurn();
+      if (!isExternalAgent) endTurn(sessionId);
       State.updateTask(agentId, "finished");
       if (payload.message) State.appendStep(agentId, payload.message.slice(0, 60));
       Sound.play("finish");
@@ -278,9 +278,8 @@ function handleHook(island: Island, payload: HookPayload) {
           State.updateTask(agentId, "idle");
           State.setPillBadge(agentId, null);
           // The finished session is shown for a moment, then the view lets go.
-          const claude = State.claudeTask;
-          if (claude) claude.session = null;
-          if (State.view === "session") island.setView(State.defaultView());
+          dropSession(sessionId);
+          if (State.view === "session" && !hasSession()) island.setView(State.defaultView());
         }
       }, 5200);
       break;
@@ -298,7 +297,8 @@ function handleHook(island: Island, payload: HookPayload) {
       } else {
         State.updateTask(agentId, "idle");
         clearSession();
-        if (State.view === "session") island.setView(State.defaultView());
+        dropSession(sessionId);
+        if (State.view === "session" && !hasSession()) island.setView(State.defaultView());
       }
       break;
 
