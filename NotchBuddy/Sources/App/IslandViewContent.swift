@@ -789,7 +789,11 @@ struct PromptView: View {
                             }
                         }
                         .onChange(of: state.stateOverride) { _, v in
-                            if v != nil { withAnimation { proxy.scrollTo("typing", anchor: .bottom) } }
+                            if v != nil {
+                                withAnimation { proxy.scrollTo("typing", anchor: .bottom) }
+                            } else if let last = state.chatHistory.last(where: { !$0.content.isEmpty }) {
+                                withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                            }
                         }
                         .onAppear {
                             if let last = state.chatHistory.last {
@@ -889,18 +893,48 @@ struct PromptView: View {
 
 // MARK: - Model / provider picker
 
+/// Wrapping horizontal flow layout for provider chips.
+private struct ProviderChipFlow: Layout {
+    var spacing: CGFloat = 6
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
+        let r = rows(maxW: proposal.replacingUnspecifiedDimensions().width, subviews: subviews)
+        return r.size
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) {
+        let r = rows(maxW: bounds.width, subviews: subviews)
+        for (idx, pt) in r.placements.enumerated() {
+            subviews[idx].place(at: CGPoint(x: bounds.minX + pt.x, y: bounds.minY + pt.y), proposal: .unspecified)
+        }
+    }
+    private func rows(maxW: CGFloat, subviews: Subviews) -> (size: CGSize, placements: [(x: CGFloat, y: CGFloat)]) {
+        var x: CGFloat = 0, y: CGFloat = 0, lineH: CGFloat = 0, maxX: CGFloat = 0
+        var pts: [(x: CGFloat, y: CGFloat)] = []
+        for sv in subviews {
+            let sz = sv.sizeThatFits(.unspecified)
+            if x + sz.width > maxW, x > 0 { x = 0; y += lineH + spacing; lineH = 0 }
+            pts.append((x: x, y: y))
+            x += sz.width + spacing
+            lineH = max(lineH, sz.height)
+            maxX = max(maxX, x - spacing)
+        }
+        return (CGSize(width: max(maxX, 0), height: y + lineH), pts)
+    }
+}
+
 struct ModelPickerView: View {
     @ObservedObject var state: AppState
     @Binding var isPresented: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Provider chips
-            HStack(spacing: 6) {
-                ForEach(ChatProvider.allCases.filter { p in
-                    !p.isLocal || (p == .ollama && !AppState.shared.ollamaServerURL.isEmpty)
-                                || (p == .lmstudio && !AppState.shared.lmstudioServerURL.isEmpty)
-                }, id: \.self) { provider in
+            // Provider chips — wrap; hide local providers when not connected and not already active
+            let visibleProviders = ChatProvider.allCases.filter { p in
+                if p == .ollama   { return !AppState.shared.ollamaServerURL.isEmpty   || state.chatProvider == .ollama }
+                if p == .lmstudio { return !AppState.shared.lmstudioServerURL.isEmpty || state.chatProvider == .lmstudio }
+                return true
+            }
+            ProviderChipFlow(spacing: 6) {
+                ForEach(visibleProviders, id: \.self) { provider in
                     Button {
                         guard provider != state.chatProvider else { return }
                         withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
@@ -940,8 +974,19 @@ struct ModelPickerView: View {
         }
         .padding(14)
         .background(Color(hex: "#16171B"))
-        .onAppear { state.fetchModelsIfNeeded(for: state.chatProvider) }
+        .onAppear {
+            // Force-refresh local providers every time the picker opens
+            if state.chatProvider.isLocal {
+                state.fetchedProviderModels[state.chatProvider] = nil
+                state.providerModelFetchError[state.chatProvider] = nil
+            }
+            state.fetchModelsIfNeeded(for: state.chatProvider)
+        }
         .onChange(of: state.chatProvider) { _, provider in
+            if provider.isLocal {
+                state.fetchedProviderModels[provider] = nil
+                state.providerModelFetchError[provider] = nil
+            }
             state.fetchModelsIfNeeded(for: provider)
         }
     }
@@ -1009,20 +1054,22 @@ struct ChatBubble: View {
     let message: ChatMessage
 
     var body: some View {
-        HStack(alignment: .top) {
-            if message.role == .user {
-                Spacer(minLength: 32)
-                Text(message.content)
-                    .font(.system(size: 12.5))
-                    .foregroundColor(Color(hex: "#F1F2F4"))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 10).padding(.vertical, 6)
-                    .background(Color.white.opacity(0.13))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-            } else {
-                ChatMarkdownView(markdown: message.content)
-                Spacer(minLength: 8)
+        if !message.content.isEmpty {
+            HStack(alignment: .top) {
+                if message.role == .user {
+                    Spacer(minLength: 32)
+                    Text(message.content)
+                        .font(.system(size: 12.5))
+                        .foregroundColor(Color(hex: "#F1F2F4"))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(Color.white.opacity(0.13))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                } else {
+                    ChatMarkdownView(markdown: message.content)
+                    Spacer(minLength: 8)
+                }
             }
         }
     }
@@ -1314,21 +1361,27 @@ struct IntegrationCardView: View {
         if isConfigured {
             if isHooks { return "Hooks installed" }
             if isAI {
+                let provider = ChatProvider(pillID: task.id)!
+                if provider.isLocal {
+                    let model = provider == .ollama ? appState.ollamaChatModel : appState.lmstudioChatModel
+                    return "Connected · \(model)"
+                }
                 let model: String
                 switch task.id {
                 case "ai_anthropic": model = appState.claudeModel
                 case "ai_google":    model = appState.googleChatModel
                 case "ai_openai":    model = appState.openAIChatModel
-                case "ai_ollama":    model = appState.ollamaChatModel
-                case "ai_lmstudio":  model = appState.lmstudioChatModel
                 default:             model = ""
                 }
-                let prefix = task.id == "ai_ollama" || task.id == "ai_lmstudio" ? "Server configured" : "Key configured"
-                return "\(prefix) · \(model)"
+                return "Key configured · \(model)"
             }
             return "Connected · loading…"
         } else {
             if isHooks { return "Hooks not installed" }
+            if isAI {
+                let provider = ChatProvider(pillID: task.id)!
+                return provider.isLocal ? "Not connected" : "Key not configured"
+            }
             return "Key not configured"
         }
     }

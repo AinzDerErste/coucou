@@ -75,6 +75,35 @@ enum ChatParsingTests {
             checkTrue("heading text",    text == "Hello")
         } else { print("  ✗ heading not found"); failures += 1 }
 
+        print("ChatMarkdown.parse — extended")
+        // Numbered list preserves number
+        let numBlocks = ChatMarkdown.parse("1. first\n2. second")
+        let numItems = numBlocks.filter { if case .listItem = $0 { return true }; return false }
+        checkTrue("ordered list count", numItems.count == 2)
+        if case .listItem(let prefix, _, _) = numItems.first! {
+            checkTrue("ordered prefix is '1.'", prefix == "1.")
+        }
+        // Heading requires space after #
+        checkTrue("heading with space", ChatMarkdown.parse("## Hi").contains { if case .heading = $0 { return true }; return false })
+        checkTrue("#nospace is paragraph", ChatMarkdown.parse("#nospace").contains { if case .paragraph = $0 { return true }; return false })
+        // Nested list indent
+        let nested = ChatMarkdown.parse("- top\n  - nested")
+        let items = nested.filter { if case .listItem = $0 { return true }; return false }
+        checkTrue("nested list count", items.count == 2)
+        if case .listItem(_, _, let indent) = items[1] { checkTrue("nested indent = 1", indent == 1) }
+        // Blockquote
+        let qBlocks = ChatMarkdown.parse("> quoted text")
+        checkTrue("blockquote parsed", qBlocks.contains { if case .quote = $0 { return true }; return false })
+        if case .quote(let text) = qBlocks.first! { checkTrue("quote text", text == "quoted text") }
+        // Paragraph stops before ordered list
+        let mixBlocks = ChatMarkdown.parse("intro\n1. item")
+        checkTrue("paragraph + ordered list", mixBlocks.filter { if case .paragraph = $0 { return true }; return false }.count == 1
+                  && mixBlocks.filter { if case .listItem = $0 { return true }; return false }.count == 1)
+        // progressiveFilter hides open think block
+        check("open think → empty",  LocalChat.progressiveFilter("<think>\nhalf"), "")
+        check("open after text",     LocalChat.progressiveFilter("answer<think>hidden"), "answer")
+        check("closed think removed", LocalChat.progressiveFilter("<think>done</think>result"), "result")
+
         // ── End-to-end tests (fake server) ───────────────────────────────────
 
         let baseURL: String = {

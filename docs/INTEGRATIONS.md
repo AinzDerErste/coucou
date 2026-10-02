@@ -172,3 +172,30 @@ Voir le catalogue de pastilles dans `docs/SPEC.md` (section « Catalogue de past
 | Micro + Reconnaissance vocale (optionnel) | dictée | premier clic sur le micro |
 
 Aucune permission Accessibilité nécessaire.
+
+
+---
+
+## Local models (Ollama / LM Studio)
+
+**Pill IDs**: `ai_ollama` (yellow `#FACC15`), `ai_lmstudio` (lime `#A3E635`)
+**Category**: AI for the chat
+**Platform**: macOS only
+
+Connect to a local OpenAI-compatible server. No API key needed.
+
+### Connect
+
+Settings → Chat → Local models → **Connect**. Coucou sends a `GET /v1/models` request to the server. If the server responds with models, the URL is saved and the provider appears in the model picker. Embedding models (`nomic-embed-text`, `bge-*`, etc.) are filtered out automatically.
+
+### Streaming
+
+Messages are streamed token by token via `POST /v1/chat/completions` with `"stream": true`. Reasoning blocks (`<think>…</think>`, used by models like DeepSeek-R1) are hidden from the chat bubble while the block is open, then removed from the final response.
+
+### File attachment
+
+Text files are sent inline, truncated to 24 000 characters. Images and PDFs: only the filename is sent.
+
+### Disconnect
+
+Settings → Chat → Local models → **Disconnect**. Clears the saved URL and model cache. If a local provider was active in the chat, the chat switches back to Anthropic.

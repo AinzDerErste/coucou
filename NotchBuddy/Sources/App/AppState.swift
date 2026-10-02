@@ -75,10 +75,10 @@ final class AppState: ObservableObject {
     @Published var lmstudioChatModel: String = ChatProvider.lmstudio.defaultModel {
         didSet { UserDefaults.standard.set(lmstudioChatModel, forKey: "lmstudioChatModel") }
     }
-    @Published var ollamaServerURL: String = "http://localhost:11434" {
+    @Published var ollamaServerURL: String = "" {
         didSet { UserDefaults.standard.set(ollamaServerURL, forKey: "ollamaServerURL") }
     }
-    @Published var lmstudioServerURL: String = "http://localhost:1234" {
+    @Published var lmstudioServerURL: String = "" {
         didSet { UserDefaults.standard.set(lmstudioServerURL, forKey: "lmstudioServerURL") }
     }
 
@@ -108,11 +108,14 @@ final class AppState: ObservableObject {
             loadingProviderModels.insert(provider)
             providerModelFetchError.removeValue(forKey: provider)
             Task {
-                let models = await LocalChat.fetchModels(baseURL: normalised)
+                let result = await LocalChat.fetchModelsResult(baseURL: normalised)
                 loadingProviderModels.remove(provider)
-                if models.isEmpty {
-                    providerModelFetchError[provider] = "Cannot reach \(normalised). Is the server running?"
-                } else {
+                switch result {
+                case .success(let models) where models.isEmpty:
+                    providerModelFetchError[provider] = provider == .ollama
+                        ? "No models yet. Download one in Ollama first."
+                        : "No models yet. Download one in LM Studio first."
+                case .success(let models):
                     fetchedProviderModels[provider] = models
                     let current = provider == .ollama ? ollamaChatModel : lmstudioChatModel
                     if !models.contains(where: { $0.id == current }) {
@@ -120,6 +123,8 @@ final class AppState: ObservableObject {
                         if provider == .ollama { ollamaChatModel = first }
                         else                   { lmstudioChatModel = first }
                     }
+                case .failure:
+                    providerModelFetchError[provider] = "Cannot reach \(normalised). Is the server running?"
                 }
             }
             return

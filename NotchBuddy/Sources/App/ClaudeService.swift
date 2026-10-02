@@ -206,7 +206,7 @@ final class ClaudeService {
         \(opening) \
         You have web search access and can help with absolutely anything — research, coding, finding places, recommendations, tasks, questions. \
         Respond in the user's language. Be thorough and complete — use as much detail as the task requires. \
-        Use markdown formatting where it helps clarity: **bold**, headings (##), bullet lists, and `code` spans. For code blocks use triple backticks.
+        Use light Markdown when it helps: short paragraphs, bullet lists, **bold**, `inline code` and fenced code blocks. Avoid tables and big headings: the chat window is small.
         """
     }
 
@@ -315,8 +315,22 @@ final class ClaudeService {
                 var prefix = "Context — App: \(app), Window: \(title)"
                 if let u = url { prefix += ", URL: \(u)" }
                 userText = prefix + "\n\n" + query
-            case .file(let name, _):
-                userText = "File: \(name)\n\n" + query
+            case .file(let name, let fileURL):
+                if provider.isLocal, let fileURL = fileURL {
+                    let ext = fileURL.pathExtension.lowercased()
+                    let binaryExts = ["pdf", "jpg", "jpeg", "png", "gif", "webp"]
+                    if !binaryExts.contains(ext),
+                       let text = try? String(contentsOf: fileURL, encoding: .utf8), !text.isEmpty {
+                        let truncated = text.count > 24_000
+                            ? String(text.prefix(24_000)) + "\n[truncated]"
+                            : text
+                        userText = "File: \(name)\n\n\(truncated)\n\n" + query
+                    } else {
+                        userText = "File: \(name)\n\n" + query
+                    }
+                } else {
+                    userText = "File: \(name)\n\n" + query
+                }
             }
         }
         msgs.append(["role": "user", "content": userText])
@@ -337,10 +351,11 @@ final class ClaudeService {
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         if useStream {
-            // Placeholder bubble for streaming
-            state.chatHistory.append(ChatMessage(role: .assistant, content: ""))
+            // Add placeholder (hidden until first token via ChatBubble empty-content guard)
+            let placeholder = ChatMessage(role: .assistant, content: "")
+            let msgId = placeholder.id
+            state.chatHistory.append(placeholder)
             state.stateOverride = .thinking
-            let histIdx = state.chatHistory.indices.last!
             let modelCopy = state.activeChatModel
             let streamBody: [String: Any] = [
                 "model": modelCopy,
@@ -354,28 +369,40 @@ final class ClaudeService {
                     baseURL: baseURL,
                     encodedBody: encodedBody,
                     model: modelCopy
-                ) { [state] visible in
-                    state.chatHistory[histIdx].content = visible
+                ) { [state, msgId] visible in
+                    if !visible.isEmpty, state.stateOverride == .thinking {
+                        state.stateOverride = nil   // hide typing dots on first visible text
+                    }
+                    if let idx = state.chatHistory.firstIndex(where: { $0.id == msgId }) {
+                        state.chatHistory[idx].content = visible
+                    }
                 }
                 conversationMessages.append(["role": "assistant", "content": final])
-                state.chatHistory[histIdx].content = final
+                if let idx = state.chatHistory.firstIndex(where: { $0.id == msgId }) {
+                    state.chatHistory[idx].content = final
+                }
                 state.stateOverride = nil
                 state.view = .prompt
                 NotificationCenter.default.post(name: .triggerEmote, object: BotEmote.happy)
             } catch let e as LocalChatError {
                 conversationMessages.removeLast()
-                state.chatHistory.removeLast()
+                state.chatHistory.removeAll { $0.id == msgId }
                 state.stateOverride = nil
                 let msg: String
                 switch e {
-                case .serverUnreachable: msg = "Cannot reach the local server. Is it running?"
-                case .modelNotFound(let m): msg = "Model '\(m)' is not installed. Run `ollama pull \(m)` or pick another model."
-                case .serverError(let s): msg = s
+                case .serverUnreachable:
+                    msg = provider == .ollama
+                        ? "Ollama isn't running. Open it, then ask again."
+                        : "Start the local server in LM Studio, then ask again."
+                case .modelNotFound(let m):
+                    msg = "\(m) isn't installed. Pick another model above the chat box."
+                case .serverError(let s):
+                    msg = s
                 }
                 await showError(msg, state: state)
             } catch {
                 conversationMessages.removeLast()
-                state.chatHistory.removeLast()
+                state.chatHistory.removeAll { $0.id == msgId }
                 state.stateOverride = nil
                 await showError(error.localizedDescription, state: state)
             }

@@ -242,3 +242,18 @@ Chaque jalon se termine par build + capture + comparaison aux références + com
 - Une session Claude Code n'est jamais bloquée par l'app (app fermée, plantée ou lente → le terminal prend le relais).
 - Hidden = 0 % CPU ; compact < 3 % ; mémoire < 100 Mo.
 - La démo (⌃⌥⌘D) se filme d'une traite sans intervention.
+
+---
+
+### ai_ollama
+- ID: `ai_ollama`
+- Color: `#FACC15` (yellow)
+- Connected when: `ollamaServerURL` is non-empty (set via Connect button in Settings → Chat)
+- Model list: fetched from `GET /v1/models`, refreshed each time the picker opens
+- Streaming: `POST /v1/chat/completions` with `stream: true`, 300 s timeout, 15 fps UI throttle
+- Think blocks: `<think>…</think>` hidden during streaming, removed from final response
+
+### ai_lmstudio
+- ID: `ai_lmstudio`
+- Color: `#A3E635` (lime)
+- Same behaviour as `ai_ollama`, default server `http://127.0.0.1:1234`

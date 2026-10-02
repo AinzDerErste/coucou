@@ -54,6 +54,8 @@ struct SettingsView: View {
     @State private var openAIKey: String  = KeychainStore.shared.get("openai-api-key") ?? ""
     @State private var ollamaURL:    String = AppState.shared.ollamaServerURL
     @State private var lmstudioURL:  String = AppState.shared.lmstudioServerURL
+    @State private var connectingOllama:    Bool = false
+    @State private var connectingLMStudio:  Bool = false
 
     // Integration keys
     @State private var resendKey: String    = KeychainStore.shared.get("resend-api-key")  ?? ""
@@ -556,43 +558,77 @@ struct SettingsView: View {
 
         GroupBox("Local models") {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Connect to a local model server. No API key needed — server must be running on your Mac.")
+                Text("Connect to a local model server. No API key needed.")
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
 
+                // ── Ollama ──────────────────────────────────────────────────────
                 HStack(spacing: 8) {
                     Circle().fill(Color(hex: "#FACC15")).frame(width: 8, height: 8)
                     Text("Ollama").font(.system(size: 12, weight: .semibold))
+                    if !state.ollamaServerURL.isEmpty {
+                        Text("Connected")
+                            .font(.system(size: 10))
+                            .foregroundColor(Color(hex: "#22C55E"))
+                    }
                 }
-                TextField("Server URL  (http://localhost:11434)", text: $ollamaURL)
-                    .textFieldStyle(.roundedBorder)
-                Button("Save") {
-                    let url = LocalChat.normaliseURL(ollamaURL)
-                    state.ollamaServerURL = url
-                    ollamaURL = url
-                    state.fetchedProviderModels[.ollama] = nil
-                    state.providerModelFetchError[.ollama] = nil
-                    statusMessage = "✓ Ollama URL saved."
+                if state.ollamaServerURL.isEmpty {
+                    TextField("http://127.0.0.1:11434", text: $ollamaURL)
+                        .textFieldStyle(.roundedBorder)
+                    Button(connectingOllama ? "Connecting…" : "Connect") {
+                        Task { await connectLocal(provider: .ollama) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(connectingOllama)
+                } else {
+                    Text(state.ollamaServerURL)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.secondary)
+                    Button("Disconnect") {
+                        state.ollamaServerURL = ""
+                        ollamaURL = ""
+                        state.fetchedProviderModels[.ollama] = nil
+                        state.providerModelFetchError[.ollama] = nil
+                        if state.chatProvider == .ollama { state.chatProvider = .anthropic }
+                        statusMessage = "Ollama disconnected."
+                    }
+                    .buttonStyle(.bordered)
                 }
-                .buttonStyle(.borderedProminent)
 
                 Divider()
 
+                // ── LM Studio ───────────────────────────────────────────────────
                 HStack(spacing: 8) {
                     Circle().fill(Color(hex: "#A3E635")).frame(width: 8, height: 8)
                     Text("LM Studio").font(.system(size: 12, weight: .semibold))
+                    if !state.lmstudioServerURL.isEmpty {
+                        Text("Connected")
+                            .font(.system(size: 10))
+                            .foregroundColor(Color(hex: "#22C55E"))
+                    }
                 }
-                TextField("Server URL  (http://localhost:1234)", text: $lmstudioURL)
-                    .textFieldStyle(.roundedBorder)
-                Button("Save") {
-                    let url = LocalChat.normaliseURL(lmstudioURL)
-                    state.lmstudioServerURL = url
-                    lmstudioURL = url
-                    state.fetchedProviderModels[.lmstudio] = nil
-                    state.providerModelFetchError[.lmstudio] = nil
-                    statusMessage = "✓ LM Studio URL saved."
+                if state.lmstudioServerURL.isEmpty {
+                    TextField("http://127.0.0.1:1234", text: $lmstudioURL)
+                        .textFieldStyle(.roundedBorder)
+                    Button(connectingLMStudio ? "Connecting…" : "Connect") {
+                        Task { await connectLocal(provider: .lmstudio) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(connectingLMStudio)
+                } else {
+                    Text(state.lmstudioServerURL)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.secondary)
+                    Button("Disconnect") {
+                        state.lmstudioServerURL = ""
+                        lmstudioURL = ""
+                        state.fetchedProviderModels[.lmstudio] = nil
+                        state.providerModelFetchError[.lmstudio] = nil
+                        if state.chatProvider == .lmstudio { state.chatProvider = .anthropic }
+                        statusMessage = "LM Studio disconnected."
+                    }
+                    .buttonStyle(.bordered)
                 }
-                .buttonStyle(.borderedProminent)
             }
             .padding(.vertical, 4)
         }
@@ -766,6 +802,42 @@ struct SettingsView: View {
         }
     }
     #endif
+
+    private func connectLocal(provider: ChatProvider) async {
+        let rawURL = provider == .ollama ? ollamaURL : lmstudioURL
+        let candidate = rawURL.isEmpty
+            ? (provider == .ollama ? "http://127.0.0.1:11434" : "http://127.0.0.1:1234")
+            : rawURL
+        let normalised = LocalChat.normaliseURL(candidate)
+        guard normalised.hasPrefix("http://") || normalised.hasPrefix("https://") else {
+            statusMessage = "Only http:// and https:// URLs are supported."
+            return
+        }
+        if provider == .ollama { connectingOllama = true } else { connectingLMStudio = true }
+        statusMessage = ""
+        let result = await LocalChat.fetchModelsResult(baseURL: normalised)
+        if provider == .ollama { connectingOllama = false } else { connectingLMStudio = false }
+        let name = provider == .ollama ? "Ollama" : "LM Studio"
+        switch result {
+        case .success(let models) where models.isEmpty:
+            statusMessage = "No models yet — download one in \(name) first."
+        case .success(let models):
+            if provider == .ollama {
+                state.ollamaServerURL = normalised
+                ollamaURL = normalised
+                state.fetchedProviderModels[.ollama] = nil
+                state.providerModelFetchError[.ollama] = nil
+            } else {
+                state.lmstudioServerURL = normalised
+                lmstudioURL = normalised
+                state.fetchedProviderModels[.lmstudio] = nil
+                state.providerModelFetchError[.lmstudio] = nil
+            }
+            statusMessage = "✓ Connected · \(models.count) model\(models.count == 1 ? "" : "s")"
+        case .failure:
+            statusMessage = "Couldn't reach \(name) at \(normalised). Is it running?"
+        }
+    }
 
     private func installHooks() {
         do {

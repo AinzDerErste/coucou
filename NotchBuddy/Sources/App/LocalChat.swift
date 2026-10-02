@@ -75,23 +75,39 @@ enum LocalChat {
 
     // MARK: Model list
 
+    /// Fetches models, returning `.success([])` when the server responds but has no chat models,
+    /// vs `.failure(.serverUnreachable)` when the server is not reachable.
+    static func fetchModelsResult(baseURL: String) async -> Result<[(id: String, label: String)], LocalChatError> {
+        guard let url = URL(string: "\(baseURL)/v1/models") else {
+            return .failure(.serverUnreachable(baseURL))
+        }
+        var req = URLRequest(url: url, timeoutInterval: 5)
+        req.setValue("Bearer ollama", forHTTPHeaderField: "Authorization")
+        do {
+            let (data, response) = try await URLSession.shared.data(for: req)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let items = json["data"] as? [[String: Any]] else {
+                return .failure(.serverUnreachable(baseURL))
+            }
+            let excluded = ["embed", "bge-", "all-minilm", "clip", "rerank"]
+            let models = items.compactMap { item -> (id: String, label: String)? in
+                guard let id = item["id"] as? String else { return nil }
+                let lower = id.lowercased()
+                guard !excluded.contains(where: { lower.contains($0) }) else { return nil }
+                return (id: id, label: id)
+            }
+            return .success(models)
+        } catch {
+            return .failure(.serverUnreachable(baseURL))
+        }
+    }
+
     /// Fetches models from a local OpenAI-compatible server (`GET /v1/models`).
     /// Filters out embedding and non-chat models (nomic-embed, bge, clip, rerank…).
     static func fetchModels(baseURL: String) async -> [(id: String, label: String)] {
-        guard let url = URL(string: "\(baseURL)/v1/models") else { return [] }
-        var req = URLRequest(url: url, timeoutInterval: 5)
-        req.setValue("Bearer ollama", forHTTPHeaderField: "Authorization")
-        guard let (data, response) = try? await URLSession.shared.data(for: req),
-              (response as? HTTPURLResponse)?.statusCode == 200,
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let items = json["data"] as? [[String: Any]] else { return [] }
-        let excluded = ["embed", "bge-", "all-minilm", "clip", "rerank"]
-        return items.compactMap { item -> (id: String, label: String)? in
-            guard let id = item["id"] as? String else { return nil }
-            let lower = id.lowercased()
-            guard !excluded.contains(where: { lower.contains($0) }) else { return nil }
-            return (id: id, label: id)
-        }
+        if case .success(let models) = await fetchModelsResult(baseURL: baseURL) { return models }
+        return []
     }
 
     // MARK: Streaming chat
@@ -134,7 +150,7 @@ enum LocalChat {
             throw LocalChatError.serverUnreachable(baseURL)
         }
 
-        var req = URLRequest(url: url, timeoutInterval: 120)
+        var req = URLRequest(url: url, timeoutInterval: 300)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer ollama", forHTTPHeaderField: "Authorization")
@@ -166,16 +182,25 @@ enum LocalChat {
         }
 
         var accumulated = ""
+        var lastUpdate = Date.distantPast
+        let minInterval: TimeInterval = 1.0 / 15.0
         do {
             for try await line in bytes.lines {
                 guard let delta = parseSSEDelta(line) else { continue }
                 accumulated += delta
-                let visible = progressiveFilter(accumulated)
-                await MainActor.run { onToken(visible) }
+                let now = Date()
+                if now.timeIntervalSince(lastUpdate) >= minInterval {
+                    lastUpdate = now
+                    let visible = progressiveFilter(accumulated)
+                    await MainActor.run { onToken(visible) }
+                }
             }
         } catch {
             throw LocalChatError.serverUnreachable(baseURL)
         }
+        // Always send the final filtered state
+        let visible = progressiveFilter(accumulated)
+        await MainActor.run { onToken(visible) }
 
         return filterThinkingBlocks(accumulated)
             .trimmingCharacters(in: .whitespacesAndNewlines)

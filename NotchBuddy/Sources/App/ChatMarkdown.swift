@@ -6,15 +6,16 @@ enum MDBlock {
     case heading(level: Int, text: String)
     case paragraph(text: String)
     case codeBlock(lang: String, code: String)
-    case listItem(text: String)
+    /// prefix: "•" for unordered, "1." / "2." etc for ordered; indent: nesting level (0-based)
+    case listItem(prefix: String, text: String, indent: Int)
+    case quote(text: String)
     case rule
 }
 
-// MARK: - Parser (Foundation only — testable without SwiftUI)
+// MARK: - Parser (Foundation only)
 
 enum ChatMarkdown {
 
-    /// Splits a markdown string into top-level blocks.
     static func parse(_ input: String) -> [MDBlock] {
         var blocks: [MDBlock] = []
         let lines = input.components(separatedBy: "\n")
@@ -36,15 +37,19 @@ enum ChatMarkdown {
                 continue
             }
 
-            // ATX heading
+            // ATX heading — MUST have space after the #s
             if line.hasPrefix("#") {
                 var level = 0
                 var rest = line
                 while rest.hasPrefix("#") { level += 1; rest = String(rest.dropFirst()) }
-                let text = rest.trimmingCharacters(in: .whitespaces)
-                if !text.isEmpty { blocks.append(.heading(level: min(level, 6), text: text)) }
-                i += 1
-                continue
+                // Require a space (or end of line) after the hashes
+                if rest.hasPrefix(" ") || rest.isEmpty {
+                    let text = rest.trimmingCharacters(in: .whitespaces)
+                    if !text.isEmpty { blocks.append(.heading(level: min(level, 6), text: text)) }
+                    i += 1
+                    continue
+                }
+                // else fall through to paragraph
             }
 
             // Horizontal rule
@@ -55,16 +60,30 @@ enum ChatMarkdown {
                 continue
             }
 
-            // List item (-, *, +, or numbered)
-            if stripped.hasPrefix("- ") || stripped.hasPrefix("* ") || stripped.hasPrefix("+ ") {
-                let text = String(stripped.dropFirst(2))
-                blocks.append(.listItem(text: text))
+            // Blockquote
+            if stripped.hasPrefix("> ") || stripped == ">" {
+                let text = stripped.hasPrefix("> ") ? String(stripped.dropFirst(2)) : ""
+                blocks.append(.quote(text: text))
                 i += 1
                 continue
             }
-            if let colonRange = stripped.range(of: "^\\d+\\.\\s+", options: .regularExpression) {
-                let text = String(stripped[colonRange.upperBound...])
-                blocks.append(.listItem(text: text))
+
+            // List item — detect indent level by leading spaces, then match marker
+            let leadingSpaces = line.prefix(while: { $0 == " " }).count
+            let indent = leadingSpaces / 2
+            if stripped.hasPrefix("- ") || stripped.hasPrefix("* ") || stripped.hasPrefix("+ ") {
+                let text = String(stripped.dropFirst(2))
+                blocks.append(.listItem(prefix: "•", text: text, indent: indent))
+                i += 1
+                continue
+            }
+            // Ordered list item
+            if let range = stripped.range(of: "^(\\d+)\\.\\s+", options: .regularExpression) {
+                let number = String(stripped[..<range.upperBound])
+                    .trimmingCharacters(in: .whitespaces)
+                    .components(separatedBy: ".").first ?? "1"
+                let text = String(stripped[range.upperBound...])
+                blocks.append(.listItem(prefix: "\(number).", text: text, indent: indent))
                 i += 1
                 continue
             }
@@ -82,9 +101,13 @@ enum ChatMarkdown {
                 let next = lines[i]
                 let nextStripped = next.trimmingCharacters(in: .whitespaces)
                 if nextStripped.isEmpty { break }
-                if next.hasPrefix("#") || next.hasPrefix("```") { break }
+                if next.hasPrefix("#") { break }
+                if next.hasPrefix("```") { break }
+                if nextStripped.hasPrefix("> ") || nextStripped == ">" { break }
                 if nextStripped.hasPrefix("- ") || nextStripped.hasPrefix("* ") || nextStripped.hasPrefix("+ ") { break }
                 if nextStripped == "---" || nextStripped == "***" || nextStripped == "___" { break }
+                // Break before ordered list items too
+                if nextStripped.range(of: "^\\d+\\.\\s+", options: .regularExpression) != nil { break }
                 paragraphLines.append(next)
                 i += 1
             }

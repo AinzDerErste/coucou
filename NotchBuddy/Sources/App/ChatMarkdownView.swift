@@ -6,12 +6,16 @@ struct ChatMarkdownView: View {
     let markdown: String
 
     var body: some View {
-        let blocks = ChatMarkdown.parse(markdown)
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+            ForEach(Array(ChatMarkdown.parse(markdown).enumerated()), id: \.offset) { _, block in
                 blockView(block)
             }
         }
+        .environment(\.openURL, OpenURLAction { url in
+            guard let safe = safeWebURL(url.absoluteString) else { return .discarded }
+            NSWorkspace.shared.open(safe)
+            return .handled
+        })
     }
 
     @ViewBuilder
@@ -22,6 +26,7 @@ struct ChatMarkdownView: View {
                 .font(.system(size: level <= 2 ? 14 : 13, weight: level <= 2 ? .bold : .semibold))
                 .foregroundColor(Color(hex: "#F1F2F4"))
                 .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
 
         case .paragraph(let text):
             Text(inlineAttributed(text))
@@ -31,31 +36,43 @@ struct ChatMarkdownView: View {
                 .textSelection(.enabled)
 
         case .codeBlock(_, let code):
-            VStack(alignment: .leading, spacing: 0) {
-                HStack {
-                    Text(code)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(Color(hex: "#C8CDD4"))
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    CopyButton(text: code)
-                }
-                .padding(10)
+            HStack(alignment: .top) {
+                Text(code)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(Color(hex: "#C8CDD4"))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                CopyButton(text: code)
             }
+            .padding(10)
             .background(Color(hex: "#0D0E12"))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.08), lineWidth: 1))
 
-        case .listItem(let text):
+        case .listItem(let prefix, let text, let indent):
             HStack(alignment: .top, spacing: 6) {
-                Text("•")
+                Text(prefix)
                     .font(.system(size: 12.5))
                     .foregroundColor(Color(hex: "#6B7079"))
-                    .padding(.top, 0)
+                    .frame(minWidth: prefix.count > 2 ? 20 : 10, alignment: .leading)
                 Text(inlineAttributed(text))
                     .font(.system(size: 12.5))
                     .foregroundColor(Color(hex: "#B0B5BE"))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+            .padding(.leading, CGFloat(indent) * 12)
+
+        case .quote(let text):
+            HStack(alignment: .top, spacing: 8) {
+                Rectangle()
+                    .fill(Color(hex: "#4B5563"))
+                    .frame(width: 2)
+                    .clipShape(Capsule())
+                Text(inlineAttributed(text))
+                    .font(.system(size: 12.5))
+                    .foregroundColor(Color(hex: "#8A8F98"))
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
             }
@@ -65,7 +82,6 @@ struct ChatMarkdownView: View {
         }
     }
 
-    /// Converts inline markdown (bold, italic, code) to AttributedString.
     private func inlineAttributed(_ text: String) -> AttributedString {
         var options = AttributedString.MarkdownParsingOptions(
             interpretedSyntax: .inlineOnlyPreservingWhitespace)
@@ -74,7 +90,7 @@ struct ChatMarkdownView: View {
     }
 }
 
-// MARK: - Copy button for code blocks
+// MARK: - Copy button
 
 private struct CopyButton: View {
     let text: String
