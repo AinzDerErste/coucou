@@ -102,6 +102,8 @@ export interface Settings {
   hooksInstalled: boolean;
   /** Claude model used by the chat. */
   model: string;
+  /** "auto" (system language), "en", "de" or "fr". */
+  language: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -116,6 +118,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autostart: false,
   hooksInstalled: false,
   model: "claude-opus-5",
+  language: "auto",
 };
 
 type Listener = () => void;

@@ -4,6 +4,7 @@
 // terminal (Windows Terminal, VS Code, PowerShell…) and all of them are handled.
 
 import { Bridge, onEvent } from "../core/bridge";
+import { localized } from "../core/i18n";
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import type { Island } from "./island";
@@ -64,26 +65,28 @@ function lastPathComponent(p: string): string {
   return idx >= 0 ? cleaned.slice(idx + 1) : cleaned;
 }
 
-/** frenchStep() — same labels as the macOS app. */
-const TOOL_LABELS: Record<string, string> = {
-  Bash: "Exécute",
-  Read: "Lit",
-  Write: "Écrit",
-  Edit: "Modifie",
-  Glob: "Cherche",
-  Grep: "Recherche",
-  WebSearch: "Recherche web",
-  WebFetch: "Récupère",
-  TodoWrite: "Tâches",
-  Task: "Agent",
-  LS: "Liste",
-  MultiEdit: "Modifie",
-  NotebookEdit: "Notebook",
-  PowerShell: "Exécute",
+/** The island's own wording for what Claude is doing. Anything else falls back to English. */
+const TOOL_LABELS: { en: Record<string, string> } & Record<string, Record<string, string>> = {
+  en: {
+    Bash: "Runs", Read: "Reads", Write: "Writes", Edit: "Edits", Glob: "Finds", Grep: "Searches",
+    WebSearch: "Web search", WebFetch: "Fetches", TodoWrite: "Tasks", Task: "Agent", LS: "Lists",
+    MultiEdit: "Edits", NotebookEdit: "Notebook", PowerShell: "Runs",
+  },
+  de: {
+    Bash: "Führt aus", Read: "Liest", Write: "Schreibt", Edit: "Ändert", Glob: "Sucht", Grep: "Durchsucht",
+    WebSearch: "Websuche", WebFetch: "Ruft ab", TodoWrite: "Aufgaben", Task: "Agent", LS: "Listet",
+    MultiEdit: "Ändert", NotebookEdit: "Notebook", PowerShell: "Führt aus",
+  },
+  // Same labels as the macOS app.
+  fr: {
+    Bash: "Exécute", Read: "Lit", Write: "Écrit", Edit: "Modifie", Glob: "Cherche", Grep: "Recherche",
+    WebSearch: "Recherche web", WebFetch: "Récupère", TodoWrite: "Tâches", Task: "Agent", LS: "Liste",
+    MultiEdit: "Modifie", NotebookEdit: "Notebook", PowerShell: "Exécute",
+  },
 };
 
 function stepLabel(tool: string, input: Record<string, unknown>): string {
-  const label = TOOL_LABELS[tool] ?? tool;
+  const label = localized(TOOL_LABELS)[tool] ?? tool;
   const str = (k: string) => (typeof input[k] === "string" ? (input[k] as string) : null);
   const cmd = str("command");
   if (cmd) return `${label} · ${cmd.slice(0, 40)}`;
