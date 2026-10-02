@@ -175,22 +175,6 @@ final class ClaudeService {
             .map { (id: $0.id, label: $0.id) }
     }
 
-    /// Fetches the model list from a local OpenAI-compatible server (Ollama, LM Studio).
-    /// Expects `GET /v1/models` with an `{"data":[{"id":"…"}]}` response.
-    static func fetchLocalModels(baseURL: String) async -> [(id: String, label: String)] {
-        guard let url = URL(string: "\(baseURL)/v1/models") else { return [] }
-        var req = URLRequest(url: url, timeoutInterval: 5)
-        req.setValue("Bearer ollama", forHTTPHeaderField: "Authorization")
-        guard let (data, response) = try? await URLSession.shared.data(for: req),
-              (response as? HTTPURLResponse)?.statusCode == 200,
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let items = json["data"] as? [[String: Any]] else { return [] }
-        return items.compactMap { item -> (id: String, label: String)? in
-            guard let id = item["id"] as? String else { return nil }
-            return (id: id, label: id)
-        }
-    }
-
     /// Chosen in Settings; falls back to the default when the field is left empty.
     private var model: String {
         let m = AppState.shared.claudeModel.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -353,58 +337,46 @@ final class ClaudeService {
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         if useStream {
-            // Insert a placeholder assistant message for streaming
-            await MainActor.run {
-                state.chatHistory.append(ChatMessage(role: .assistant, content: ""))
-                state.stateOverride = .thinking
-            }
+            // Placeholder bubble for streaming
+            state.chatHistory.append(ChatMessage(role: .assistant, content: ""))
+            state.stateOverride = .thinking
+            let histIdx = state.chatHistory.indices.last!
+            let modelCopy = state.activeChatModel
+            let streamBody: [String: Any] = [
+                "model": modelCopy,
+                "messages": msgs,
+                "stream": true,
+                "max_tokens": 4096,
+            ]
+            let encodedBody = (try? JSONSerialization.data(withJSONObject: streamBody)) ?? Data()
             do {
-                let (bytes, response) = try await URLSession.shared.bytes(for: req)
-                guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-                    var errBody = ""
-                    for try await byte in bytes { errBody.append(Character(UnicodeScalar(byte))) }
-                    conversationMessages.removeLast()
-                    if let data = errBody.data(using: .utf8),
-                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       let err = (json["error"] as? [String: Any])?["message"] as? String {
-                        await showError(err, state: state)
-                    } else {
-                        await showError("HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)", state: state)
-                    }
-                    await MainActor.run {
-                        state.chatHistory.removeLast()
-                        state.stateOverride = nil
-                    }
-                    return
+                let final = try await LocalChat.streamChat(
+                    baseURL: baseURL,
+                    encodedBody: encodedBody,
+                    model: modelCopy
+                ) { [state] visible in
+                    state.chatHistory[histIdx].content = visible
                 }
-                var accumulated = ""
-                for try await line in bytes.lines {
-                    guard let delta = LocalChat.parseSSEDelta(line) else { continue }
-                    accumulated += delta
-                    let filtered = LocalChat.filterThinkingBlocks(accumulated)
-                    await MainActor.run {
-                        if let idx = state.chatHistory.indices.last {
-                            state.chatHistory[idx].content = filtered
-                        }
-                    }
-                }
-                let final = LocalChat.filterThinkingBlocks(accumulated)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
                 conversationMessages.append(["role": "assistant", "content": final])
-                await MainActor.run {
-                    if let idx = state.chatHistory.indices.last {
-                        state.chatHistory[idx].content = final
-                    }
-                    state.stateOverride = nil
-                    state.view = .prompt
-                    NotificationCenter.default.post(name: .triggerEmote, object: BotEmote.happy)
+                state.chatHistory[histIdx].content = final
+                state.stateOverride = nil
+                state.view = .prompt
+                NotificationCenter.default.post(name: .triggerEmote, object: BotEmote.happy)
+            } catch let e as LocalChatError {
+                conversationMessages.removeLast()
+                state.chatHistory.removeLast()
+                state.stateOverride = nil
+                let msg: String
+                switch e {
+                case .serverUnreachable: msg = "Cannot reach the local server. Is it running?"
+                case .modelNotFound(let m): msg = "Model '\(m)' is not installed. Run `ollama pull \(m)` or pick another model."
+                case .serverError(let s): msg = s
                 }
+                await showError(msg, state: state)
             } catch {
                 conversationMessages.removeLast()
-                await MainActor.run {
-                    state.chatHistory.removeLast()
-                    state.stateOverride = nil
-                }
+                state.chatHistory.removeLast()
+                state.stateOverride = nil
                 await showError(error.localizedDescription, state: state)
             }
         } else {
@@ -426,12 +398,10 @@ final class ClaudeService {
                 }
                 let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
                 conversationMessages.append(["role": "assistant", "content": trimmed])
-                await MainActor.run {
-                    state.chatHistory.append(ChatMessage(role: .assistant, content: trimmed))
-                    state.stateOverride = nil
-                    state.view = .prompt
-                    NotificationCenter.default.post(name: .triggerEmote, object: BotEmote.happy)
-                }
+                state.chatHistory.append(ChatMessage(role: .assistant, content: trimmed))
+                state.stateOverride = nil
+                state.view = .prompt
+                NotificationCenter.default.post(name: .triggerEmote, object: BotEmote.happy)
             } catch {
                 conversationMessages.removeLast()
                 await showError(error.localizedDescription, state: state)

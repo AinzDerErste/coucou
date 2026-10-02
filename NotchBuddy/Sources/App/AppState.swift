@@ -108,7 +108,7 @@ final class AppState: ObservableObject {
             loadingProviderModels.insert(provider)
             providerModelFetchError.removeValue(forKey: provider)
             Task {
-                let models = await ClaudeService.fetchLocalModels(baseURL: normalised)
+                let models = await LocalChat.fetchModels(baseURL: normalised)
                 loadingProviderModels.remove(provider)
                 if models.isEmpty {
                     providerModelFetchError[provider] = "Cannot reach \(normalised). Is the server running?"
