@@ -28,6 +28,14 @@ const HIT_MARGIN = 14;
 /** Time constant of the halo's colour and opacity easing, in seconds (~0.5 s to settle). */
 const GLOW_EASE_S = 0.16;
 
+/**
+ * After the pointer has left, page mouse-moves are ignored for this long. GTK's
+ * leave reaches the page over IPC and can overtake the last move the page was
+ * still handed; that stale move would put the mouse "inside" again, and since
+ * nothing follows it, for good — the island would never auto-close.
+ */
+const POINTER_LEAVE_GRACE_MS = 400;
+
 /** The three views the drop sequence owns; leaving them stops the engine. */
 const UPLOAD_VIEWS: ReadonlySet<IslandViewName> = new Set(["upload", "uploading", "choose"]);
 
@@ -78,6 +86,8 @@ export class Island {
   private collapsed = false;
   private collapseTimer: number | null = null;
   private wasInIsland = false;
+  /** When the pointer last left the island window (performance.now()). */
+  private pointerLeftAt = -Infinity;
   /** Last shape handed to Rust for the click-through test. */
   private pushedRect = { x: -1, y: -1, w: -1, h: -1 };
   private homeCollapseAt: number | null = null;
@@ -576,7 +586,10 @@ export class Island {
    * reported as a cursor far away, which is what the poll would have said.
    */
   followPageCursor() {
-    window.addEventListener("mousemove", (e) => this.onCursor(e.clientX, e.clientY));
+    window.addEventListener("mousemove", (e) => {
+      if (performance.now() - this.pointerLeftAt < POINTER_LEAVE_GRACE_MS) return;
+      this.onCursor(e.clientX, e.clientY);
+    });
     window.addEventListener("mouseout", (e) => {
       if (e.relatedTarget == null) this.onCursor(-10_000, -10_000);
     });
@@ -584,6 +597,7 @@ export class Island {
 
   /** Cursor in window-logical coordinates. */
   onCursor(x: number, y: number) {
+    if (x <= -9999) this.pointerLeftAt = performance.now();
     State.mouse = { x, y };
     const rect = this.islandRect();
     State.mouseInIsland = { x: x - rect.x, y: y - rect.y };
