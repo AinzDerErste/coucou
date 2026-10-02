@@ -25,6 +25,10 @@ interface HookPayload {
   tool_input?: Record<string, unknown>;
   /** Optional agent tag: lowercase, digits and hyphens, ≤ 24 chars. */
   coucou_agent?: string;
+  /** Konsole's D-Bus names for the terminal the session runs in (Linux). */
+  konsole_service?: string;
+  konsole_session?: string;
+  konsole_window?: string;
 }
 
 /** Same rule as HookServer.validateAgent on macOS. "claude" is reserved. */
@@ -121,14 +125,14 @@ function approvalTarget(tool: string, input: Record<string, unknown>): string {
 }
 
 function upsert(projectName: string, cwd: string) {
-  const t = State.tasks.find((x) => x.id === CLAUDE_ID);
+  const t = State.claudeTask;
   if (!t) return;
   t.name = projectName;
   if (cwd) t.sessionCwd = cwd;
 }
 
 function clearSession() {
-  const t = State.tasks.find((x) => x.id === CLAUDE_ID);
+  const t = State.claudeTask;
   if (!t) return;
   t.steps = [];
   t.stepIndex = 0;
@@ -138,6 +142,13 @@ function clearSession() {
 
 export function registerHookHandlers(island: Island) {
   void onEvent<HookPayload>("hook", (payload) => handleHook(island, payload));
+}
+
+/** Remembers which Konsole tab the session runs in, for "Open terminal". */
+function noteTerminal(payload: HookPayload) {
+  const { konsole_service: service, konsole_session: session, konsole_window: window } = payload;
+  const task = State.claudeTask;
+  if (task && service && session && window) task.terminal = { service, session, window };
 }
 
 function handleHook(island: Island, payload: HookPayload) {
@@ -151,6 +162,7 @@ function handleHook(island: Island, payload: HookPayload) {
 
   const name = payload.hook_event_name ?? "";
   const cwd = payload.cwd ?? "";
+  noteTerminal(payload);
   const raw = lastPathComponent(cwd);
   const projectName = aliasProjectName(raw || "Session");
 

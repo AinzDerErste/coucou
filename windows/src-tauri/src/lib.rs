@@ -138,10 +138,28 @@ fn open_url(url: String) {
     platform::open_url(&url);
 }
 
-/// "Open terminal" opens the working folder in VS Code when `code` is on PATH,
-/// and falls back to the file manager otherwise.
+/// Brings the Konsole tab a session runs in to the front (Linux). The three
+/// values come out of the hook's environment; `platform` checks their shape.
 #[tauri::command]
-fn open_in_vscode(path: Option<String>) -> bool {
+fn focus_terminal(service: String, session: String, window: String) -> bool {
+    platform::focus_terminal(&service, &session, &window)
+}
+
+/// How "Open terminal" ended, as the island needs to tell it.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum OpenResult {
+    Opened,
+    /// No VS Code (or fork) on PATH: the folder went to the file manager instead.
+    NoEditor,
+    /// The path was not an existing folder given in full; nothing was launched.
+    BadPath,
+}
+
+/// "Open terminal" opens the working folder in VS Code (or a fork of it) when one
+/// is on PATH, and falls back to the file manager otherwise.
+#[tauri::command]
+fn open_in_vscode(path: Option<String>) -> OpenResult {
     // No shell anywhere near this. The path is a project folder chosen by
     // whoever is using Claude Code, and a shell would happily read `&`, `^`, `%`
     // or `$` in a folder name as syntax. Finding the launcher ourselves and
@@ -153,22 +171,29 @@ fn open_in_vscode(path: Option<String>) -> bool {
     if let Some(p) = path.as_deref() {
         let p = std::path::Path::new(p);
         if !(p.is_absolute() && p.is_dir()) {
-            return false;
+            return OpenResult::BadPath;
         }
     }
-    if let Some(code) = platform::find_on_path("code") {
-        let mut cmd = Command::new(code);
+    // VS Code under its various names (Microsoft's build, Insiders, the OSS
+    // build, VSCodium), then Cursor, a VS Code fork that takes the same arguments.
+    for name in ["code", "code-insiders", "code-oss", "codium", "vscodium", "cursor"] {
+        let Some(exe) = platform::find_on_path(name) else {
+            continue;
+        };
+        let mut cmd = Command::new(exe);
         if let Some(p) = path.as_deref() {
             cmd.arg(p);
         }
         if platform::no_console(&mut cmd).spawn().is_ok() {
-            return true;
+            return OpenResult::Opened;
         }
     }
+    // No editor: the folder in the file manager is still better than nothing,
+    // and the island says why nothing else happened.
     if let Some(p) = path.as_deref() {
         platform::reveal_folder(p);
     }
-    false
+    OpenResult::NoEditor
 }
 
 #[tauri::command]
@@ -390,6 +415,7 @@ pub fn run() {
             monitors,
             open_url,
             open_in_vscode,
+            focus_terminal,
             quit_app,
             hooks_status,
             hooks_preview,

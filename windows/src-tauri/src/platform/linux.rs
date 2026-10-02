@@ -338,6 +338,96 @@ fn apply_input_region(gw: &impl IsA<gtk::Widget>, rect: Region) {
     }
 }
 
+// ── Terminal ──────────────────────────────────────────────────────────────────
+
+/// `:1.42` or `org.kde.konsole-1234`: a D-Bus service name, nothing else.
+fn is_dbus_service(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() < 64
+        && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b':' | b'.' | b'-' | b'_'))
+}
+
+/// `/Sessions/3` → `3`.
+fn object_index<'a>(path: &'a str, kind: &str) -> Option<&'a str> {
+    let n = path.strip_prefix(kind)?;
+    (!n.is_empty() && n.len() < 10 && n.bytes().all(|b| b.is_ascii_digit())).then_some(n)
+}
+
+/// One `gdbus call` on the session bus; its stdout on success.
+fn gdbus(dest: &str, path: &str, method: &str, args: &[&str]) -> Option<String> {
+    let out = Command::new("gdbus")
+        .args(["call", "--session", "--dest", dest, "--object-path", path, "--method", method])
+        .args(args)
+        .output()
+        .ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Switches Konsole to the tab the session runs in and raises its window.
+///
+/// Wayland lets no app raise a window, but KWin runs scripts that can: the
+/// window is picked by Konsole's process id and, when one Konsole owns several
+/// windows, by the tab's title. Without KWin (or `gdbus`) the tab still
+/// switches and false is returned only if Konsole itself did not answer.
+pub fn focus_terminal(service: &str, session: &str, window: &str) -> bool {
+    let (Some(id), Some(_)) =
+        (object_index(session, "/Sessions/"), object_index(window, "/Windows/"))
+    else {
+        return false;
+    };
+    if !is_dbus_service(service) {
+        return false;
+    }
+    let title = gdbus(service, session, "org.kde.konsole.Session.title", &["1"])
+        .and_then(|t| t.trim().strip_prefix("('")?.strip_suffix("',)").map(str::to_string))
+        .unwrap_or_default();
+    if gdbus(service, window, "org.kde.konsole.Window.setCurrentSession", &[id]).is_none() {
+        return false;
+    }
+    let pid = gdbus(
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus.GetConnectionUnixProcessID",
+        &[service],
+    )
+    .and_then(|o| o.split_whitespace().nth(1)?.trim_end_matches(',').parse::<u32>().ok());
+    if let Some(pid) = pid {
+        raise_window_of(pid, &title);
+    }
+    true
+}
+
+/// Asks KWin to activate the window of process `pid` whose caption starts with
+/// `title` (any window of the process if none does). The title goes in as a JSON
+/// string, which is also a valid JS one.
+fn raise_window_of(pid: u32, title: &str) {
+    let script = format!(
+        "const ws = workspace.windowList().filter(w => w.pid === {pid});\n\
+         const w = ws.find(w => w.caption.startsWith({title})) || ws[0];\n\
+         if (w) workspace.activeWindow = w;\n",
+        title = serde_json::to_string(title).unwrap_or_else(|_| "\"\"".into()),
+    );
+    let path = std::env::temp_dir().join(format!("coucou-focus-{}.js", std::process::id()));
+    if std::fs::write(&path, script).is_err() {
+        return;
+    }
+    let name = format!("coucou-focus-{}", std::process::id());
+    let path_str = path.to_string_lossy();
+    if let Some(id) = gdbus(
+        "org.kde.KWin",
+        "/Scripting",
+        "org.kde.kwin.Scripting.loadScript",
+        &[&path_str, &name],
+    )
+    .and_then(|o| {
+        o.split(|c: char| !c.is_ascii_digit()).find(|n| !n.is_empty()).map(str::to_string)
+    }) {
+        gdbus("org.kde.KWin", &format!("/Scripting/Script{id}"), "org.kde.kwin.Script.run", &[]);
+        gdbus("org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.unloadScript", &[&name]);
+    }
+    let _ = std::fs::remove_file(path);
+}
+
 // ── Displays ──────────────────────────────────────────────────────────────────
 
 /// Top-left corner of the primary display, in pixels.
@@ -397,6 +487,35 @@ pub fn place_on_monitor(win: &WebviewWindow, index: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Needs a running Konsole with this test started inside it:
+    /// `cargo test --lib -- --ignored focus_own_konsole_tab`.
+    #[test]
+    #[ignore]
+    fn focus_own_konsole_tab() {
+        let get = |k| std::env::var(k).expect(k);
+        assert!(focus_terminal(
+            &get("KONSOLE_DBUS_SERVICE"),
+            &get("KONSOLE_DBUS_SESSION"),
+            &get("KONSOLE_DBUS_WINDOW"),
+        ));
+    }
+
+    #[test]
+    fn only_konsole_shaped_names_reach_the_bus() {
+        assert!(is_dbus_service(":1.42") && is_dbus_service("org.kde.konsole-1234"));
+        assert!(
+            !is_dbus_service("")
+                && !is_dbus_service("a b")
+                && !is_dbus_service("x;y")
+                && !is_dbus_service("--help ")
+        );
+        assert_eq!(object_index("/Sessions/3", "/Sessions/"), Some("3"));
+        assert_eq!(object_index("/Windows/12", "/Windows/"), Some("12"));
+        assert_eq!(object_index("/Sessions/3/x", "/Sessions/"), None);
+        assert_eq!(object_index("/Windows/1", "/Sessions/"), None);
+        assert_eq!(object_index("/Sessions/", "/Sessions/"), None);
+    }
 
     #[test]
     fn the_primary_display_is_the_one_marked_with_a_star() {

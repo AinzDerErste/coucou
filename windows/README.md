@@ -184,6 +184,9 @@ What changes on Linux:
 - **Keys** live in the Secret Service (GNOME Keyring, KWallet).
 - **Files**: preferences in `~/.config/coucou/`, the log at
   `~/.local/share/coucou/coucou.log`.
+- **Open terminal** jumps to the Konsole tab the session runs in: the relay passes
+  Konsole's D-Bus names, the app switches the tab over D-Bus and asks KWin (a
+  short script, via `gdbus`) to raise that window. In any other terminal it opens
+  the folder in VS Code, as on Windows.
 - What the Windows build leaves out, this one does too: sending a file by
-  email, dragging Mochi onto a window, and jumping to a specific terminal
-  window — "Open terminal" opens the folder in VS Code.
+  email and dragging Mochi onto a window.

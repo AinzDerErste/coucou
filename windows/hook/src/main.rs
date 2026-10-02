@@ -154,6 +154,10 @@ fn read_event() -> Option<(String, String)> {
         ("term_session_id", "TERM_SESSION_ID"),
         ("vscode_pid", "VSCODE_PID"),
         ("session_pid", "CLAUDE_CODE_SSE_PORT"),
+        // Konsole: where "Open terminal" can jump to (its D-Bus tab and window).
+        ("konsole_service", "KONSOLE_DBUS_SERVICE"),
+        ("konsole_session", "KONSOLE_DBUS_SESSION"),
+        ("konsole_window", "KONSOLE_DBUS_WINDOW"),
     ] {
         if !map.contains_key(key) {
             let value = std::env::var(var).unwrap_or_default();

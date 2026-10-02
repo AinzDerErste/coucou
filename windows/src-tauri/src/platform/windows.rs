@@ -233,6 +233,12 @@ pub fn set_activating(win: &WebviewWindow, activating: bool) {
 
 /// Click-through here is the poll's WS_EX_TRANSPARENT toggle, not a region.
 pub fn set_input_region(_win: &WebviewWindow, _rect: Option<(f64, f64, f64, f64)>) {}
+
+/// No jump to a specific terminal window on Windows.
+pub fn focus_terminal(_service: &str, _session: &str, _window: &str) -> bool {
+    false
+}
+
 /// Windows reports the primary display itself (`primary_monitor`).
 pub fn primary_monitor_origin() -> Option<(i32, i32)> {
     None

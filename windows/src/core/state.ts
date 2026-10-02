@@ -19,6 +19,15 @@ export interface AgentTask {
   miniEye?: EyeShape | null;
   pillBadge?: PillBadge | null;
   sessionCwd?: string | null;
+  /** Where the session's terminal lives, when we know how to jump to it. */
+  terminal?: TerminalRef | null;
+}
+
+/** Konsole's D-Bus names for a terminal tab, as the hook's environment gives them. */
+export interface TerminalRef {
+  service: string;
+  session: string;
+  window: string;
 }
 
 export interface ApprovalInfo {
@@ -163,6 +172,11 @@ class AppState {
 
   get effectiveState(): BotStateName {
     return this.stateOverride ?? this.focusTask?.state ?? "idle";
+  }
+
+  /** The Claude Code pill. */
+  get claudeTask(): AgentTask | undefined {
+    return this.tasks.find((t) => t.id === "integration_claude");
   }
 
   get otherTasks(): AgentTask[] {

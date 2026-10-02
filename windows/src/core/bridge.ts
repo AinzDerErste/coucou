@@ -5,7 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import type { Settings } from "./state";
+import type { Settings, TerminalRef } from "./state";
 
 export const IS_TAURI =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -56,7 +56,10 @@ export const Bridge = {
   openUrl: (url: string) => call<void>("open_url", { url }),
 
   /** "Open terminal" → opens the folder in VS Code when `code` is on PATH. */
-  openInVSCode: (path: string | null) => call<boolean>("open_in_vscode", { path }),
+  openInVSCode: (path: string | null) => call<"ok" | "no-editor" | "bad-path">("open_in_vscode", { path }),
+
+  /** Brings the terminal tab the session runs in to the front. False: not possible here. */
+  focusTerminal: (t: TerminalRef) => call<boolean>("focus_terminal", { ...t }),
 
   quit: () => call<void>("quit_app"),
 
