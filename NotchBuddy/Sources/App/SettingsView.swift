@@ -52,6 +52,8 @@ struct SettingsView: View {
     // Multi-provider chat keys
     @State private var googleKey: String  = KeychainStore.shared.get("google-api-key") ?? ""
     @State private var openAIKey: String  = KeychainStore.shared.get("openai-api-key") ?? ""
+    @State private var ollamaURL:    String = AppState.shared.ollamaServerURL
+    @State private var lmstudioURL:  String = AppState.shared.lmstudioServerURL
 
     // Integration keys
     @State private var resendKey: String    = KeychainStore.shared.get("resend-api-key")  ?? ""
@@ -546,6 +548,49 @@ struct SettingsView: View {
                 Button("Save") {
                     KeychainStore.shared.set("openai-api-key", value: openAIKey)
                     statusMessage = "✓ OpenAI key saved."
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(.vertical, 4)
+        }
+
+        GroupBox("Local models") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Connect to a local model server. No API key needed — server must be running on your Mac.")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+
+                HStack(spacing: 8) {
+                    Circle().fill(Color(hex: "#FACC15")).frame(width: 8, height: 8)
+                    Text("Ollama").font(.system(size: 12, weight: .semibold))
+                }
+                TextField("Server URL  (http://localhost:11434)", text: $ollamaURL)
+                    .textFieldStyle(.roundedBorder)
+                Button("Save") {
+                    let url = LocalChat.normaliseURL(ollamaURL)
+                    state.ollamaServerURL = url
+                    ollamaURL = url
+                    state.fetchedProviderModels[.ollama] = nil
+                    state.providerModelFetchError[.ollama] = nil
+                    statusMessage = "✓ Ollama URL saved."
+                }
+                .buttonStyle(.borderedProminent)
+
+                Divider()
+
+                HStack(spacing: 8) {
+                    Circle().fill(Color(hex: "#A3E635")).frame(width: 8, height: 8)
+                    Text("LM Studio").font(.system(size: 12, weight: .semibold))
+                }
+                TextField("Server URL  (http://localhost:1234)", text: $lmstudioURL)
+                    .textFieldStyle(.roundedBorder)
+                Button("Save") {
+                    let url = LocalChat.normaliseURL(lmstudioURL)
+                    state.lmstudioServerURL = url
+                    lmstudioURL = url
+                    state.fetchedProviderModels[.lmstudio] = nil
+                    state.providerModelFetchError[.lmstudio] = nil
+                    statusMessage = "✓ LM Studio URL saved."
                 }
                 .buttonStyle(.borderedProminent)
             }

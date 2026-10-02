@@ -69,6 +69,18 @@ final class AppState: ObservableObject {
     @Published var openAIChatModel: String = ChatProvider.openai.defaultModel {
         didSet { UserDefaults.standard.set(openAIChatModel, forKey: "openAIChatModel") }
     }
+    @Published var ollamaChatModel: String = ChatProvider.ollama.defaultModel {
+        didSet { UserDefaults.standard.set(ollamaChatModel, forKey: "ollamaChatModel") }
+    }
+    @Published var lmstudioChatModel: String = ChatProvider.lmstudio.defaultModel {
+        didSet { UserDefaults.standard.set(lmstudioChatModel, forKey: "lmstudioChatModel") }
+    }
+    @Published var ollamaServerURL: String = "http://localhost:11434" {
+        didSet { UserDefaults.standard.set(ollamaServerURL, forKey: "ollamaServerURL") }
+    }
+    @Published var lmstudioServerURL: String = "http://localhost:1234" {
+        didSet { UserDefaults.standard.set(lmstudioServerURL, forKey: "lmstudioServerURL") }
+    }
 
     // The always-on workspace pill (default: VS Code). Persisted.
     @Published var mainPillId: String = PillCatalog.defaultMainPillId {
@@ -85,6 +97,34 @@ final class AppState: ObservableObject {
     func fetchModelsIfNeeded(for provider: ChatProvider) {
         guard !loadingProviderModels.contains(provider),
               fetchedProviderModels[provider] == nil else { return }
+        // Local providers: fetch from server URL (no API key needed)
+        if provider.isLocal {
+            let baseURL = provider == .ollama ? ollamaServerURL : lmstudioServerURL
+            let normalised = LocalChat.normaliseURL(baseURL)
+            guard !normalised.isEmpty else {
+                providerModelFetchError[provider] = "No server URL configured."
+                return
+            }
+            loadingProviderModels.insert(provider)
+            providerModelFetchError.removeValue(forKey: provider)
+            Task {
+                let models = await ClaudeService.fetchLocalModels(baseURL: normalised)
+                loadingProviderModels.remove(provider)
+                if models.isEmpty {
+                    providerModelFetchError[provider] = "Cannot reach \(normalised). Is the server running?"
+                } else {
+                    fetchedProviderModels[provider] = models
+                    let current = provider == .ollama ? ollamaChatModel : lmstudioChatModel
+                    if !models.contains(where: { $0.id == current }) {
+                        let first = models.first!.id
+                        if provider == .ollama { ollamaChatModel = first }
+                        else                   { lmstudioChatModel = first }
+                    }
+                }
+            }
+            return
+        }
+        // Remote providers: require API key
         guard let apiKey = KeychainStore.shared.get(provider.keychainKey), !apiKey.isEmpty else {
             providerModelFetchError[provider] = "No API key — add it in Settings."
             return
@@ -97,14 +137,13 @@ final class AppState: ObservableObject {
             case .anthropic: models = await ClaudeService.fetchModels(apiKey: apiKey)
             case .google:    models = await ClaudeService.fetchGoogleModels(apiKey: apiKey)
             case .openai:    models = await ClaudeService.fetchOpenAIModels(apiKey: apiKey)
+            case .ollama, .lmstudio: models = []  // handled above
             }
             loadingProviderModels.remove(provider)
             if models.isEmpty {
                 providerModelFetchError[provider] = "Failed to load models. Check your API key."
             } else {
                 fetchedProviderModels[provider] = models
-                // If the saved model isn't in the fetched list, pick a sensible default:
-                // prefer "sonnet" (Anthropic), "flash" (Google), "mini" (OpenAI); else first.
                 switch provider {
                 case .anthropic:
                     if !models.contains(where: { $0.id == claudeModel }) {
@@ -118,6 +157,7 @@ final class AppState: ObservableObject {
                     if !models.contains(where: { $0.id == openAIChatModel }) {
                         openAIChatModel = models.first(where: { $0.id.contains("mini") })?.id ?? models.first!.id
                     }
+                case .ollama, .lmstudio: break
                 }
             }
         }
@@ -129,6 +169,8 @@ final class AppState: ObservableObject {
         case .anthropic: return claudeModel
         case .google:    return googleChatModel
         case .openai:    return openAIChatModel
+        case .ollama:    return ollamaChatModel
+        case .lmstudio:  return lmstudioChatModel
         }
     }
 
@@ -256,6 +298,10 @@ final class AppState: ObservableObject {
         if let v = ud.string(forKey: "chatProvider"), let p = ChatProvider(rawValue: v) { chatProvider = p }
         if let v = ud.string(forKey: "googleChatModel"), !v.isEmpty { googleChatModel = v }
         if let v = ud.string(forKey: "openAIChatModel"), !v.isEmpty { openAIChatModel = v }
+        if let v = ud.string(forKey: "ollamaChatModel"), !v.isEmpty { ollamaChatModel = v }
+        if let v = ud.string(forKey: "lmstudioChatModel"), !v.isEmpty { lmstudioChatModel = v }
+        if let v = ud.string(forKey: "ollamaServerURL"), !v.isEmpty { ollamaServerURL = v }
+        if let v = ud.string(forKey: "lmstudioServerURL"), !v.isEmpty { lmstudioServerURL = v }
         // Migrate old 60s default → 15s
         if let v = ud.object(forKey: "autoCloseInterval") as? Double {
             autoCloseInterval = (v == 60) ? 15 : v
@@ -572,5 +618,5 @@ enum ChatRole { case user, assistant }
 struct ChatMessage: Identifiable {
     let id = UUID()
     let role: ChatRole
-    let content: String
+    var content: String   // var for streaming updates
 }

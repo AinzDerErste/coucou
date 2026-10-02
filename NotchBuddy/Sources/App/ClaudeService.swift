@@ -175,6 +175,22 @@ final class ClaudeService {
             .map { (id: $0.id, label: $0.id) }
     }
 
+    /// Fetches the model list from a local OpenAI-compatible server (Ollama, LM Studio).
+    /// Expects `GET /v1/models` with an `{"data":[{"id":"…"}]}` response.
+    static func fetchLocalModels(baseURL: String) async -> [(id: String, label: String)] {
+        guard let url = URL(string: "\(baseURL)/v1/models") else { return [] }
+        var req = URLRequest(url: url, timeoutInterval: 5)
+        req.setValue("Bearer ollama", forHTTPHeaderField: "Authorization")
+        guard let (data, response) = try? await URLSession.shared.data(for: req),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let items = json["data"] as? [[String: Any]] else { return [] }
+        return items.compactMap { item -> (id: String, label: String)? in
+            guard let id = item["id"] as? String else { return nil }
+            return (id: id, label: id)
+        }
+    }
+
     /// Chosen in Settings; falls back to the default when the field is left empty.
     private var model: String {
         let m = AppState.shared.claudeModel.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -206,7 +222,7 @@ final class ClaudeService {
         \(opening) \
         You have web search access and can help with absolutely anything — research, coding, finding places, recommendations, tasks, questions. \
         Respond in the user's language. Be thorough and complete — use as much detail as the task requires. \
-        No markdown formatting (no **, no ##, no bullet dashes). Use plain text with line breaks.
+        Use markdown formatting where it helps clarity: **bold**, headings (##), bullet lists, and `code` spans. For code blocks use triple backticks.
         """
     }
 
@@ -264,28 +280,42 @@ final class ClaudeService {
         }
     }
 
-    // MARK: - OpenAI-compatible chat (Google Gemini / OpenAI)
+    // MARK: - OpenAI-compatible chat (Google Gemini / OpenAI / Ollama / LM Studio)
 
     func chatOpenAICompatible(query: String, context: PromptContext?, state: AppState) async {
         let provider = state.chatProvider
         guard provider != .anthropic else { return }
-        guard let key = KeychainStore.shared.get(provider.keychainKey), !key.isEmpty else {
-            await showError("\(provider.displayName) API key missing. Configure it in Settings.", state: state)
-            return
-        }
 
         let baseURL: String
-        switch provider {
-        case .google:  baseURL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-        case .openai:  baseURL = "https://api.openai.com/v1/chat/completions"
-        case .anthropic: return
+        if provider == .ollama {
+            baseURL = LocalChat.normaliseURL(state.ollamaServerURL)
+        } else if provider == .lmstudio {
+            baseURL = LocalChat.normaliseURL(state.lmstudioServerURL)
+        } else {
+            switch provider {
+            case .google:  baseURL = "https://generativelanguage.googleapis.com/v1beta/openai"
+            case .openai:  baseURL = "https://api.openai.com/v1"
+            case .anthropic, .ollama, .lmstudio: baseURL = ""
+            }
         }
-        guard let url = URL(string: baseURL) else { return }
 
-        // Build messages: system + conversation history + new user turn
+        guard !baseURL.isEmpty, let url = URL(string: "\(baseURL)/chat/completions") else { return }
+
+        // Auth header
+        let authHeader: String
+        if provider.isLocal {
+            authHeader = "Bearer ollama"
+        } else {
+            guard let key = KeychainStore.shared.get(provider.keychainKey), !key.isEmpty else {
+                await showError("\(provider.displayName) API key missing. Configure it in Settings.", state: state)
+                return
+            }
+            authHeader = "Bearer \(key)"
+        }
+
+        // Build messages
         var msgs: [[String: Any]] = [["role": "system", "content": systemPrompt]]
         for m in conversationMessages {
-            // Remap Anthropic content arrays to plain strings for OpenAI compat
             var simplified = m
             if let content = m["content"] as? [[String: Any]],
                let textBlock = content.first(where: { ($0["type"] as? String) == "text" }),
@@ -294,7 +324,6 @@ final class ClaudeService {
             }
             msgs.append(simplified)
         }
-        // Add user message (plain text for OpenAI compat)
         var userText = query
         if conversationMessages.isEmpty, let ctx = context {
             switch ctx {
@@ -309,44 +338,104 @@ final class ClaudeService {
         msgs.append(["role": "user", "content": userText])
         conversationMessages.append(["role": "user", "content": userText])
 
-        let body: [String: Any] = [
+        let useStream = provider.isLocal
+        var body: [String: Any] = [
             "model": state.activeChatModel,
             "max_tokens": 4096,
             "messages": msgs,
         ]
+        if useStream { body["stream"] = true }
 
-        var req = URLRequest(url: url, timeoutInterval: 30)
+        var req = URLRequest(url: url, timeoutInterval: useStream ? 120 : 30)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        req.setValue(authHeader, forHTTPHeaderField: "Authorization")
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        do {
-            let (data, response) = try await URLSession.shared.data(for: req)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let err = (json["error"] as? [String: Any])?["message"] as? String {
-                    throw NSError(domain: "ChatAPI", code: 0, userInfo: [NSLocalizedDescriptionKey: err])
-                }
-                throw NSError(domain: "ChatAPI", code: 0, userInfo: [NSLocalizedDescriptionKey: "HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)"])
-            }
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let choices = json["choices"] as? [[String: Any]],
-                  let message = choices.first?["message"] as? [String: Any],
-                  let content = message["content"] as? String else {
-                throw NSError(domain: "ChatAPI", code: 0, userInfo: [NSLocalizedDescriptionKey: "Unexpected response format"])
-            }
-            let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-            conversationMessages.append(["role": "assistant", "content": trimmed])
+        if useStream {
+            // Insert a placeholder assistant message for streaming
             await MainActor.run {
-                state.chatHistory.append(ChatMessage(role: .assistant, content: trimmed))
-                state.stateOverride = nil
-                state.view = .prompt
-                NotificationCenter.default.post(name: .triggerEmote, object: BotEmote.happy)
+                state.chatHistory.append(ChatMessage(role: .assistant, content: ""))
+                state.stateOverride = .thinking
             }
-        } catch {
-            conversationMessages.removeLast()
-            await showError(error.localizedDescription, state: state)
+            do {
+                let (bytes, response) = try await URLSession.shared.bytes(for: req)
+                guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                    var errBody = ""
+                    for try await byte in bytes { errBody.append(Character(UnicodeScalar(byte))) }
+                    conversationMessages.removeLast()
+                    if let data = errBody.data(using: .utf8),
+                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let err = (json["error"] as? [String: Any])?["message"] as? String {
+                        await showError(err, state: state)
+                    } else {
+                        await showError("HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)", state: state)
+                    }
+                    await MainActor.run {
+                        state.chatHistory.removeLast()
+                        state.stateOverride = nil
+                    }
+                    return
+                }
+                var accumulated = ""
+                for try await line in bytes.lines {
+                    guard let delta = LocalChat.parseSSEDelta(line) else { continue }
+                    accumulated += delta
+                    let filtered = LocalChat.filterThinkingBlocks(accumulated)
+                    await MainActor.run {
+                        if let idx = state.chatHistory.indices.last {
+                            state.chatHistory[idx].content = filtered
+                        }
+                    }
+                }
+                let final = LocalChat.filterThinkingBlocks(accumulated)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                conversationMessages.append(["role": "assistant", "content": final])
+                await MainActor.run {
+                    if let idx = state.chatHistory.indices.last {
+                        state.chatHistory[idx].content = final
+                    }
+                    state.stateOverride = nil
+                    state.view = .prompt
+                    NotificationCenter.default.post(name: .triggerEmote, object: BotEmote.happy)
+                }
+            } catch {
+                conversationMessages.removeLast()
+                await MainActor.run {
+                    state.chatHistory.removeLast()
+                    state.stateOverride = nil
+                }
+                await showError(error.localizedDescription, state: state)
+            }
+        } else {
+            // Non-streaming (Google, OpenAI)
+            do {
+                let (data, response) = try await URLSession.shared.data(for: req)
+                guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let err = (json["error"] as? [String: Any])?["message"] as? String {
+                        throw NSError(domain: "ChatAPI", code: 0, userInfo: [NSLocalizedDescriptionKey: err])
+                    }
+                    throw NSError(domain: "ChatAPI", code: 0, userInfo: [NSLocalizedDescriptionKey: "HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)"])
+                }
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let choices = json["choices"] as? [[String: Any]],
+                      let message = choices.first?["message"] as? [String: Any],
+                      let content = message["content"] as? String else {
+                    throw NSError(domain: "ChatAPI", code: 0, userInfo: [NSLocalizedDescriptionKey: "Unexpected response format"])
+                }
+                let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                conversationMessages.append(["role": "assistant", "content": trimmed])
+                await MainActor.run {
+                    state.chatHistory.append(ChatMessage(role: .assistant, content: trimmed))
+                    state.stateOverride = nil
+                    state.view = .prompt
+                    NotificationCenter.default.post(name: .triggerEmote, object: BotEmote.happy)
+                }
+            } catch {
+                conversationMessages.removeLast()
+                await showError(error.localizedDescription, state: state)
+            }
         }
     }
 

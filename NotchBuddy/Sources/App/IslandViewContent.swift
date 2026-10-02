@@ -175,6 +175,10 @@ struct OverviewView: View {
             switchChatProvider(.google)
         case "ai_openai":
             switchChatProvider(.openai)
+        case "ai_ollama":
+            switchChatProvider(.ollama)
+        case "ai_lmstudio":
+            switchChatProvider(.lmstudio)
         case "integration_music":
             #if !APPSTORE
             MusicController.shared.openMusic()
@@ -893,7 +897,10 @@ struct ModelPickerView: View {
         VStack(alignment: .leading, spacing: 12) {
             // Provider chips
             HStack(spacing: 6) {
-                ForEach(ChatProvider.allCases, id: \.self) { provider in
+                ForEach(ChatProvider.allCases.filter { p in
+                    !p.isLocal || (p == .ollama && !AppState.shared.ollamaServerURL.isEmpty)
+                                || (p == .lmstudio && !AppState.shared.lmstudioServerURL.isEmpty)
+                }, id: \.self) { provider in
                     Button {
                         guard provider != state.chatProvider else { return }
                         withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
@@ -964,6 +971,8 @@ struct ModelPickerView: View {
                             case .anthropic: state.claudeModel = model.id
                             case .google:    state.googleChatModel = model.id
                             case .openai:    state.openAIChatModel = model.id
+                            case .ollama:    state.ollamaChatModel = model.id
+                            case .lmstudio:  state.lmstudioChatModel = model.id
                             }
                             isPresented = false
                             SoundEngine.shared.play("blip")
@@ -1012,11 +1021,7 @@ struct ChatBubble: View {
                     .background(Color.white.opacity(0.13))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
             } else {
-                Text(message.content)
-                    .font(.system(size: 12.5))
-                    .foregroundColor(Color(hex: "#B0B5BE"))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
+                ChatMarkdownView(markdown: message.content)
                 Spacer(minLength: 8)
             }
         }
@@ -1193,6 +1198,8 @@ struct IntegrationCardView: View {
         case "ai_anthropic":  return KeychainStore.shared.get("anthropic-api-key") != nil
         case "ai_google":     return KeychainStore.shared.get("google-api-key")    != nil
         case "ai_openai":     return KeychainStore.shared.get("openai-api-key")    != nil
+        case "ai_ollama":     return !AppState.shared.ollamaServerURL.isEmpty
+        case "ai_lmstudio":   return !AppState.shared.lmstudioServerURL.isEmpty
         case "integration_resend":  return KeychainStore.shared.get("resend-api-key") != nil
         case "integration_n8n":     return KeychainStore.shared.get("n8n-api-key")    != nil
         case "integration_vercel":  return KeychainStore.shared.get("vercel-token")   != nil
@@ -1303,14 +1310,21 @@ struct IntegrationCardView: View {
                    : nil
         if let err = svcErr { return err }
         let isHooks = task.id == "agent_gemini" || task.id == "agent_antigravity"
-        let isAI    = task.id == "ai_anthropic" || task.id == "ai_google" || task.id == "ai_openai"
+        let isAI    = ChatProvider(pillID: task.id) != nil
         if isConfigured {
             if isHooks { return "Hooks installed" }
             if isAI {
-                let model = task.id == "ai_anthropic" ? appState.claudeModel
-                          : task.id == "ai_google"    ? appState.googleChatModel
-                          :                             appState.openAIChatModel
-                return "Key configured · \(model)"
+                let model: String
+                switch task.id {
+                case "ai_anthropic": model = appState.claudeModel
+                case "ai_google":    model = appState.googleChatModel
+                case "ai_openai":    model = appState.openAIChatModel
+                case "ai_ollama":    model = appState.ollamaChatModel
+                case "ai_lmstudio":  model = appState.lmstudioChatModel
+                default:             model = ""
+                }
+                let prefix = task.id == "ai_ollama" || task.id == "ai_lmstudio" ? "Server configured" : "Key configured"
+                return "\(prefix) · \(model)"
             }
             return "Connected · loading…"
         } else {
@@ -1451,10 +1465,8 @@ struct IntegrationCardView: View {
                             .buttonStyle(.plain)
                         }
                         #endif
-                    } else if task.id == "ai_anthropic" || task.id == "ai_google" || task.id == "ai_openai" {
+                    } else if let provider = ChatProvider(pillID: task.id) {
                         if isConfigured {
-                            let provider: ChatProvider = task.id == "ai_anthropic" ? .anthropic
-                                                       : task.id == "ai_google"    ? .google : .openai
                             Button("Chat with \(task.name)") {
                                 switchChatProvider(provider)
                             }
