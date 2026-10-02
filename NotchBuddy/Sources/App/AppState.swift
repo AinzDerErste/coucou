@@ -102,7 +102,9 @@ final class AppState: ObservableObject {
             let baseURL = provider == .ollama ? ollamaServerURL : lmstudioServerURL
             let normalised = LocalChat.normaliseURL(baseURL)
             guard !normalised.isEmpty else {
-                providerModelFetchError[provider] = "No server URL configured."
+                providerModelFetchError[provider] = provider == .ollama
+                    ? "Connect Ollama in Settings → Chat first."
+                    : "Connect LM Studio in Settings → Chat first."
                 return
             }
             loadingProviderModels.insert(provider)
@@ -620,7 +622,7 @@ struct NotionPage: Identifiable {
 
 enum ChatRole { case user, assistant }
 
-struct ChatMessage: Identifiable {
+struct ChatMessage: Identifiable, Equatable {
     let id = UUID()
     let role: ChatRole
     var content: String   // var for streaming updates

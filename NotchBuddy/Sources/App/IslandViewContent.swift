@@ -783,9 +783,9 @@ struct PromptView: View {
                             }
                             .padding(.vertical, 2)
                         }
-                        .onChange(of: state.chatHistory.count) { _, _ in
-                            if let last = state.chatHistory.last {
-                                withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                        .onChange(of: state.chatHistory) { _, _ in
+                            if let last = state.chatHistory.last(where: { !$0.content.isEmpty }) {
+                                proxy.scrollTo(last.id, anchor: .bottom)
                             }
                         }
                         .onChange(of: state.stateOverride) { _, v in

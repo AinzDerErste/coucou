@@ -1057,9 +1057,14 @@ struct SettingsView: View {
             if def.id == "agent_codex"         && !HookServer.codexHooksInstalled()  { return "Hooks not installed" }
             #endif
             if def.category == .ai {
-                let keyId = def.id == "ai_anthropic" ? "anthropic-api-key"
-                           : def.id == "ai_google"    ? "google-api-key" : "openai-api-key"
-                if KeychainStore.shared.get(keyId) == nil { return "Key not configured" }
+                if let provider = ChatProvider(pillID: def.id), provider.isLocal {
+                    let url = provider == .ollama ? state.ollamaServerURL : state.lmstudioServerURL
+                    if url.isEmpty { return "Not connected" }
+                } else {
+                    let keyId = def.id == "ai_anthropic" ? "anthropic-api-key"
+                               : def.id == "ai_google"    ? "google-api-key" : "openai-api-key"
+                    if KeychainStore.shared.get(keyId) == nil { return "Key not configured" }
+                }
             }
             return nil
         }()

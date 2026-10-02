@@ -283,7 +283,14 @@ final class ClaudeService {
             }
         }
 
-        guard !baseURL.isEmpty, let url = URL(string: "\(baseURL)/chat/completions") else { return }
+        guard !baseURL.isEmpty else {
+            if provider.isLocal {
+                let name = provider == .ollama ? "Ollama" : "LM Studio"
+                await showError("Connect \(name) in Settings → Chat first.", state: state)
+            }
+            return
+        }
+        guard let url = URL(string: "\(baseURL)/chat/completions") else { return }
 
         // Auth header
         let authHeader: String
