@@ -14,6 +14,7 @@ Routes:
 import json
 import sys
 import socket
+import socketserver
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -106,6 +107,22 @@ class FakeLLMHandler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
 
+class FastBindHTTPServer(HTTPServer):
+    """HTTPServer that skips the reverse-DNS lookup in server_bind.
+
+    The default HTTPServer.server_bind calls socket.getfqdn(), which triggers
+    a reverse-DNS lookup for the bound address.  On some CI runners this can
+    block for several seconds and cause the port-file handshake to time out.
+    We bypass it by calling TCPServer.server_bind directly and hard-coding
+    server_name to the loopback address we already know we are binding to.
+    """
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = "127.0.0.1"
+        self.server_port = self.server_address[1]
+
+
 def find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
@@ -114,7 +131,7 @@ def find_free_port() -> int:
 
 if __name__ == "__main__":
     port = find_free_port()
-    server = HTTPServer(("127.0.0.1", port), FakeLLMHandler)
+    server = FastBindHTTPServer(("127.0.0.1", port), FakeLLMHandler)
 
     # Write port to the file passed as argv[1] so the caller can read it
     if len(sys.argv) > 1:
