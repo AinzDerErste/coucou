@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use gtk::glib::translate::ToGlibPtr;
 use gtk::prelude::*;
-use tauri::{AppHandle, WebviewWindow};
+use tauri::{AppHandle, Emitter, WebviewWindow};
 
 use super::{home_dir, LocalTime};
 
@@ -222,6 +222,22 @@ fn gtk_window_ptr(win: &gtk::ApplicationWindow) -> *mut gtk::ffi::GtkWindow {
 /// WebKitGTK has no competing drop target to remove.
 pub fn unblock_webview_drops(_app: &AppHandle) {}
 
+/// WebKitGTK sends the page no mouseleave when the pointer leaves the surface
+/// (and Wayland has no global cursor either), so the island would never learn
+/// the mouse is gone and never auto-close. GTK does get the compositor's leave:
+/// report it as the cursor being far away, which is what the Windows poll says.
+fn report_pointer_leaving(win: &WebviewWindow, gw: &gtk::ApplicationWindow) {
+    gw.add_events(gtk::gdk::EventMask::LEAVE_NOTIFY_MASK);
+    let win = win.clone();
+    gw.connect_leave_notify_event(move |_, ev| {
+        // Moving onto the webview inside the window is not leaving.
+        if ev.detail() != gtk::gdk::NotifyType::Inferior {
+            let _ = win.emit("cursor", crate::island::CursorPayload { x: -10_000.0, y: -10_000.0 });
+        }
+        gtk::glib::Propagation::Proceed
+    });
+}
+
 /// Turns the island into an overlay surface on the top edge that never takes
 /// the keyboard. Must run before the window is first shown: a layer surface
 /// cannot be made out of a window the compositor already knows.
@@ -231,6 +247,7 @@ pub fn unblock_webview_drops(_app: &AppHandle) {}
 /// up to the window manager.
 pub fn make_non_activating(win: &WebviewWindow) {
     let Ok(gw) = win.gtk_window() else { return };
+    report_pointer_leaving(win, &gw);
     // COUCOU_LAYER_SHELL=0 is the way out on a compositor where it misbehaves.
     let wanted = std::env::var("COUCOU_LAYER_SHELL").map(|v| v != "0").unwrap_or(true);
     let supported = unsafe { layer::gtk_layer_is_supported() } != 0;

@@ -133,6 +133,25 @@ body {
   transition: opacity 0.22s ease-in-out;
 }
 
+/* `.view.on` sets pointer-events itself, which beats the value inherited from
+   #views: without this the invisible view sits on top of the drop canvas and
+   eats the clicks meant for its painted buttons. */
+#views.hidden-by-upload .view.on {
+  pointer-events: none;
+}
+
+/* #content sits above the drop canvas in the stacking order and covers the whole
+   island, so it has to let clicks through to the canvas's hit areas. Only the
+   header, which stays on top of the sequence, keeps the mouse. (!important:
+   the island sets pointer-events on #content inline.) */
+#content.upload-on {
+  pointer-events: none !important;
+}
+
+#content.upload-on #header {
+  pointer-events: auto;
+}
+
 #bot-glow {
   position: absolute;
   pointer-events: none;
