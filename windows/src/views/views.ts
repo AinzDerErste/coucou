@@ -4,6 +4,7 @@
 
 import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
+import { fa } from "./fa";
 import { Ticker } from "./ticker";
 import { State, type AgentTask } from "../core/state";
 import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
@@ -78,12 +79,12 @@ function stack(padLeft: number, padRight: number, ...children: Node[]): HTMLElem
 // ── Header ────────────────────────────────────────────────────────────────────
 
 export function buildHeader(actions: ViewActions): ViewHost {
-  const tabHome = h("button", { class: "tab", title: "Overview", onclick: () => go("overview") }, svg(ICONS.house, 13));
-  const tabChat = h("button", { class: "tab", title: "Ask", onclick: () => go("prompt") }, svg(ICONS.bubble, 13));
-  const tabDrop = h("button", { class: "tab", title: "Drop", onclick: () => go("upload") }, svg(ICONS.plus, 13));
+  const tabHome = h("button", { class: "tab", title: "Overview", onclick: () => go("overview") }, fa("house", 15));
+  const tabChat = h("button", { class: "tab", title: "Ask", onclick: () => go("prompt") }, fa("comment", 15));
+  const tabDrop = h("button", { class: "tab", title: "Drop", onclick: () => go("upload") }, fa("plus", 14));
 
-  const gearBtn = h("button", { title: "Settings", onclick: () => go("settings") }, svg(ICONS.gear, 14));
-  const soundBtn = h("button", { title: "Mute", onclick: () => actions.toggleSound() }, svg(ICONS.speakerOn, 14));
+  const gearBtn = h("button", { title: "Settings", onclick: () => go("settings") }, fa("gear", 16));
+  const soundBtn = h("button", { title: "Mute", onclick: () => actions.toggleSound() }, fa("volumeHigh", 16));
 
   function go(v: IslandViewName) {
     actions.blip();
@@ -106,9 +107,9 @@ export function buildHeader(actions: ViewActions): ViewHost {
       tabDrop.classList.toggle("on", v === "upload");
       gearBtn.classList.toggle("on", v === "settings");
       clear(gearBtn);
-      gearBtn.append(svg(v === "settings" ? ICONS.gearFill : ICONS.gear, 14));
+      gearBtn.append(fa("gear", 16));
       clear(soundBtn);
-      soundBtn.append(svg(State.settings.soundEnabled ? ICONS.speakerOn : ICONS.speakerOff, 14));
+      soundBtn.append(fa(State.settings.soundEnabled ? "volumeHigh" : "volumeXmark", 16));
       el.style.opacity = v === "confused" ? "0" : "1";
     },
   };
