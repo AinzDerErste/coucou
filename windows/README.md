@@ -74,6 +74,12 @@ It works from any terminal — Windows Terminal, PowerShell, VS Code, Git Bash.
 Credential Manager**, never on disk and never in the interface — the island can
 only ask whether a key exists. Same for every integration key.
 
+Without an API key, the chat asks **Claude Code** instead (`claude -p`, on your own
+login) when `claude` is on your PATH. It may read the dropped file and search or
+fetch the web, nothing else, and your hooks stay out of it. **Settings → Language**
+sets the language of the answers and of the island's activity labels (system
+language by default).
+
 No telemetry. The only network requests Coucou makes are to the services you
 configure yourself.
 

@@ -57,11 +57,15 @@ No markdown formatting (no **, no ##, no bullet dashes). Use plain text with lin
 pub struct Chat {
     /// Full multi-turn history, including tool_use / tool_result blocks.
     messages: Mutex<Vec<Value>>,
+    /// Claude Code session of this conversation, when it runs without an API key
+    /// (see claude_cli.rs).
+    pub(crate) cli_session: Mutex<Option<String>>,
 }
 
 impl Chat {
     pub fn reset(&self) {
         self.messages.lock().unwrap().clear();
+        *self.cli_session.lock().unwrap() = None;
     }
 
     fn is_empty(&self) -> bool {
@@ -103,8 +107,9 @@ pub async fn send(
     query: String,
     context: Option<ChatContext>,
 ) -> Result<ChatReply, String> {
-    let key = secrets::get("anthropic-api-key")
-        .ok_or_else(|| "API key missing. Open settings.".to_string())?;
+    let Some(key) = secrets::get("anthropic-api-key") else {
+        return crate::claude_cli::send(chat, language, query, context).await;
+    };
 
     let mut content: Vec<Value> = Vec::new();
 
