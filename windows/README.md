@@ -170,6 +170,9 @@ What changes on Linux:
   is a regular window. `COUCOU_LAYER_SHELL=0` forces that mode anywhere.
 - **Click-through** is the window's input region, kept equal to the island
   shape, so the compositor sends every other click to what is underneath.
+- **Which display**: Wayland has no "main display", so "Main display" is read from
+  XWayland's RandR primary (what KDE and Mutter set), via `xrandr`. Without it the
+  first display wins. **Settings → Island lives on** also lists every display by name.
 - **NVIDIA**: with the proprietary driver, WebKitGTK's DMABUF renderer makes the
   compositor kill the app on its first frame, so Coucou switches it off
   (`WEBKIT_DISABLE_DMABUF_RENDERER=1`) unless you set that variable yourself.

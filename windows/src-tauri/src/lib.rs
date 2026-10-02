@@ -117,6 +117,12 @@ fn focus_window(app: AppHandle, focused: bool) {
     }
 }
 
+/// Every display by name and size, for the picker in the settings.
+#[tauri::command]
+fn monitors(app: AppHandle) -> Vec<island::MonitorInfo> {
+    island::monitor_list(&app)
+}
+
 #[tauri::command]
 fn reposition(app: AppHandle, shared: State<Shared>) {
     let pref = shared.settings.lock().unwrap().screen.clone();
@@ -381,6 +387,7 @@ pub fn run() {
             set_island_rect,
             focus_window,
             reposition,
+            monitors,
             open_url,
             open_in_vscode,
             quit_app,

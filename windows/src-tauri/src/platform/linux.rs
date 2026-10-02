@@ -12,9 +12,9 @@
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::process::{Command, Stdio};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use gtk::glib::translate::ToGlibPtr;
 use gtk::prelude::*;
@@ -198,6 +198,10 @@ mod layer {
         pub fn gtk_layer_set_anchor(window: *mut GtkWindow, edge: c_int, anchor: c_int);
         pub fn gtk_layer_set_exclusive_zone(window: *mut GtkWindow, zone: c_int);
         pub fn gtk_layer_set_keyboard_mode(window: *mut GtkWindow, mode: c_int);
+        pub fn gtk_layer_set_monitor(
+            window: *mut GtkWindow,
+            monitor: *mut gtk::gdk::ffi::GdkMonitor,
+        );
     }
 }
 
@@ -317,9 +321,74 @@ fn apply_input_region(gw: &impl IsA<gtk::Widget>, rect: Region) {
     }
 }
 
+// ── Displays ──────────────────────────────────────────────────────────────────
+
+/// Top-left corner of the primary display, in pixels.
+///
+/// Wayland has no primary display and GDK just lists the first one, which is
+/// rarely the one the user calls the main screen. Compositors do tell XWayland
+/// though (KWin from its "primary" priority, Mutter likewise), so ask RandR.
+/// `None` where there is no `xrandr` or no X server: the caller falls back to
+/// GDK's order. Cached for a few seconds, the display poll asks twice a second.
+// Known limit: positions are compared 1:1 with tao's, so a fractional-scale primary may not match.
+pub fn primary_monitor_origin() -> Option<(i32, i32)> {
+    use std::time::{Duration, Instant};
+    static CACHE: Mutex<Option<(Instant, Option<(i32, i32)>)>> = Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap();
+    if let Some((at, found)) = *cache {
+        if at.elapsed() < Duration::from_secs(5) {
+            return found;
+        }
+    }
+    let found = Command::new("xrandr")
+        .arg("--listmonitors")
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .and_then(|o| parse_primary_origin(&String::from_utf8_lossy(&o.stdout)));
+    *cache = Some((Instant::now(), found));
+    found
+}
+
+/// `" 0: +*DP-1 2560/597x1440/336+1920+0  DP-1"` → `(1920, 0)`.
+fn parse_primary_origin(listing: &str) -> Option<(i32, i32)> {
+    let line = listing.lines().find(|l| l.contains("+*"))?;
+    let mut at = line.split_whitespace().nth(2)?.split('+').skip(1);
+    Some((at.next()?.parse().ok()?, at.next()?.parse().ok()?))
+}
+
+/// Index of the monitor the layer surface was last pinned to (none yet).
+static PINNED_MONITOR: AtomicUsize = AtomicUsize::new(usize::MAX);
+
+/// Pins the layer surface to the monitor with this index. tao lists monitors in
+/// GDK's order, so the index means the same thing on both sides. Without this
+/// the compositor picks the output, and it is rarely the one the user wants.
+/// A no-op for an ordinary window, which `set_position` already places.
+pub fn place_on_monitor(win: &WebviewWindow, index: usize) {
+    if !LAYER_SURFACE.load(Ordering::Relaxed)
+        || PINNED_MONITOR.swap(index, Ordering::Relaxed) == index
+    {
+        return;
+    }
+    let Ok(gw) = win.gtk_window() else { return };
+    let Some(monitor) = gtk::gdk::Display::default().and_then(|d| d.monitor(index as i32)) else {
+        return;
+    };
+    unsafe { layer::gtk_layer_set_monitor(gtk_window_ptr(&gw), monitor.to_glib_none().0) };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_primary_display_is_the_one_marked_with_a_star() {
+        let out = "Monitors: 2\n 0: +*DP-1 2560/597x1440/336+1920+0  DP-1\n 1: +HDMI-A-1 1920/521x1080/293+0+360  HDMI-A-1\n";
+        assert_eq!(parse_primary_origin(out), Some((1920, 0)));
+        assert_eq!(parse_primary_origin(" 0: +DP-1 1920/1x1080/1+0+0  DP-1\n"), None);
+        let left = " 0: +*DP-2 1920/1x1080/1+-1920+0  DP-2\n";
+        assert_eq!(parse_primary_origin(left), Some((-1920, 0)));
+    }
 
     #[test]
     fn only_a_private_directory_of_ours_can_hold_the_relay_socket() {

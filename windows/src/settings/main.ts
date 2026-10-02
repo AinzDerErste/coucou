@@ -386,9 +386,15 @@ function generalSection(): HTMLElement {
     h("option", { value: "primary", text: "Main display" }),
     h("option", { value: "cursor", text: "Display under the cursor" }),
   );
+  void Bridge.monitors().then((list) => {
+    for (const m of list ?? []) {
+      screen.append(h("option", { value: m.name, text: `${m.name} (${m.width}×${m.height})` }));
+    }
+    screen.value = settings.screen;
+  });
   screen.value = settings.screen;
   screen.addEventListener("change", () => {
-    settings.screen = screen.value as Settings["screen"];
+    settings.screen = screen.value;
     void save();
   });
 

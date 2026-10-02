@@ -50,6 +50,9 @@ export const Bridge = {
 
   reposition: () => call<void>("reposition"),
 
+  /** Every display, for the settings picker. */
+  monitors: () => call<{ name: string; width: number; height: number }[]>("monitors"),
+
   openUrl: (url: string) => call<void>("open_url", { url }),
 
   /** "Open terminal" → opens the folder in VS Code when `code` is on PATH. */
