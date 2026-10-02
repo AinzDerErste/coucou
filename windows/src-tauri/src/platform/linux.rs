@@ -51,15 +51,32 @@ pub fn local_dir() -> PathBuf {
     xdg("XDG_DATA_HOME", ".local/share").join("coucou")
 }
 
-/// Environment the webview must inherit, set before any thread or process
-/// starts.
-///
+/// Environment the webview must inherit. Set before any thread or process starts.
+pub fn prepare_environment() {
+    work_around_nvidia_explicit_sync();
+    isolate_appimage_gstreamer_registry();
+}
+
+/// With NVIDIA's proprietary driver, WebKitGTK's DMABUF renderer commits frames
+/// to a Wayland surface after announcing explicit sync without an acquire point.
+/// The compositor answers with a protocol error and the app dies on its first
+/// frame ("explicit sync is used, but no acquire point is set", seen on KDE with
+/// an RTX 2080 Ti). Software frames avoid it, and an island this small does not
+/// need the fast path. A value the user set themselves stays.
+fn work_around_nvidia_explicit_sync() {
+    if Path::new("/proc/driver/nvidia/version").exists()
+        && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none()
+    {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+}
+
 /// Inside an AppImage, WebKit uses the GStreamer bundled with it, and GStreamer
 /// keeps its plugin registry in ~/.cache/gstreamer-1.0 by default — the same
 /// file the system's GStreamer uses. The AppImage is mounted somewhere new on
 /// every launch, so each launch would rewrite the system's registry with
 /// plugin paths that vanish once Coucou quits. Give ours its own file.
-pub fn prepare_environment() {
+fn isolate_appimage_gstreamer_registry() {
     if std::env::var_os("APPIMAGE").is_none() || std::env::var_os("GST_REGISTRY").is_some() {
         return;
     }
