@@ -190,6 +190,10 @@ What changes on Linux:
 - **Keys** live in the Secret Service (GNOME Keyring, KWallet).
 - **Files**: preferences in `~/.config/coucou/`, the log at
   `~/.local/share/coucou/coucou.log`.
+- **Code view**: while a session has edited a file or run a command, a click on the
+  overview's left card opens a small editor (the changed lines in red and green with
+  a few lines of context from the file, then the last command and what it printed);
+  the button in its corner goes back. Nothing opens by itself.
 - **Open terminal** jumps to the Konsole tab the session runs in: the relay passes
   Konsole's D-Bus names, the app switches the tab over D-Bus and asks KWin (a
   short script, via `gdbus`) to raise that window. In any other terminal it opens

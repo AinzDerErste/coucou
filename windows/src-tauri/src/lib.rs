@@ -11,6 +11,7 @@ mod pipe;
 mod platform;
 mod secrets;
 mod settings;
+mod snippet;
 mod tray;
 
 use std::process::Command;
@@ -137,6 +138,17 @@ fn open_url(url: String) {
         return;
     }
     platform::open_url(&url);
+}
+
+/// The lines around an edit, for the session view (see snippet.rs).
+#[tauri::command]
+fn file_snippet(
+    cwd: String,
+    path: String,
+    find: String,
+    context: usize,
+) -> Option<snippet::Snippet> {
+    snippet::around(&cwd, &path, &find, context.min(6))
 }
 
 /// Brings the Konsole tab a session runs in to the front (Linux). The three
@@ -420,6 +432,7 @@ pub fn run() {
             open_url,
             open_in_vscode,
             focus_terminal,
+            file_snippet,
             quit_app,
             hooks_status,
             hooks_preview,

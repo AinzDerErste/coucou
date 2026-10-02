@@ -8,6 +8,7 @@ import { localized } from "../core/i18n";
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import type { Island } from "./island";
+import { beginTurn, endTurn, toolFinished, toolStarted } from "../views/session";
 
 const CLAUDE_ID = "integration_claude";
 
@@ -30,6 +31,10 @@ interface HookPayload {
   konsole_service?: string;
   konsole_session?: string;
   konsole_window?: string;
+  /** The last lines a Bash command printed (the relay keeps nothing else of its output). */
+  tool_tail?: string[];
+  /** PostToolUseFailure: why the tool failed. */
+  error?: string;
 }
 
 /** Same rule as HookServer.validateAgent on macOS. "claude" is reserved. */
@@ -141,6 +146,7 @@ function clearSession() {
   t.stepIndex = 0;
   t.name = "VS Code";
   t.pillBadge = null;
+  t.session = null;
 }
 
 export function registerHookHandlers(island: Island) {
@@ -210,6 +216,11 @@ function handleHook(island: Island, payload: HookPayload) {
       // The field is `prompt`; reading `message` meant this step was always blank.
       const asked = payload.prompt ?? payload.message;
       if (asked) State.appendStep(agentId, asked.slice(0, 60));
+      if (!isExternalAgent) {
+        beginTurn();
+        // The new turn has shown nothing yet, so an editor view would be empty.
+        if (State.view === "session") island.setView(State.defaultView());
+      }
       surface("overview", false);
       break;
     }
@@ -219,17 +230,25 @@ function handleHook(island: Island, payload: HookPayload) {
       State.updateTask(agentId, "working");
       const tool = payload.tool_name ?? "Tool";
       State.appendStep(agentId, stepLabel(tool, payload.tool_input ?? {}));
+      // What the editor view shows is kept up to date; opening it is the user's click.
+      if (!isExternalAgent) toolStarted(tool, payload.tool_input ?? {}, cwd);
       surface("overview", false);
       break;
     }
 
     case "PostToolUse":
       State.updateTask(agentId, "working");
+      if (!isExternalAgent) {
+        toolFinished(payload.tool_name ?? "", payload.tool_input ?? {}, cwd, { tail: payload.tool_tail });
+      }
       break;
 
     case "PostToolUseFailure":
       State.updateTask(agentId, "working");
       State.appendStep(agentId, "⚠ failed");
+      if (!isExternalAgent) {
+        toolFinished(payload.tool_name ?? "", payload.tool_input ?? {}, cwd, { failed: true, error: payload.error });
+      }
       break;
 
     case "Notification": {
@@ -246,6 +265,7 @@ function handleHook(island: Island, payload: HookPayload) {
     }
 
     case "Stop":
+      if (!isExternalAgent) endTurn();
       State.updateTask(agentId, "finished");
       if (payload.message) State.appendStep(agentId, payload.message.slice(0, 60));
       Sound.play("finish");
@@ -257,6 +277,10 @@ function handleHook(island: Island, payload: HookPayload) {
         } else {
           State.updateTask(agentId, "idle");
           State.setPillBadge(agentId, null);
+          // The finished session is shown for a moment, then the view lets go.
+          const claude = State.claudeTask;
+          if (claude) claude.session = null;
+          if (State.view === "session") island.setView(State.defaultView());
         }
       }, 5200);
       break;
@@ -274,6 +298,7 @@ function handleHook(island: Island, payload: HookPayload) {
       } else {
         State.updateTask(agentId, "idle");
         clearSession();
+        if (State.view === "session") island.setView(State.defaultView());
       }
       break;
 

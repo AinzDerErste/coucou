@@ -2,6 +2,7 @@
 
 import type { BotEmoteName, BotStateName, IslandMode, IslandViewName } from "./layout";
 import type { EyeShape } from "../mochi/engine";
+import type { SessionData } from "../views/session";
 
 export type AgentSource = "claudeCode" | "n8n" | "agent";
 export type PillBadge = "approval" | "finished" | "error";
@@ -19,6 +20,8 @@ export interface AgentTask {
   miniEye?: EyeShape | null;
   pillBadge?: PillBadge | null;
   sessionCwd?: string | null;
+  /** What the session view shows: the last edit, the last command, the phases. */
+  session?: SessionData | null;
   /** Where the session's terminal lives, when we know how to jump to it. */
   terminal?: TerminalRef | null;
 }
