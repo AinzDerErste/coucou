@@ -163,6 +163,22 @@ export class Island {
         State.setPillBadge("integration_claude", null);
         this.setView(State.defaultView());
       },
+      answerQuestion: (answers) => {
+        const req = State.pendingQuestion;
+        if (!req) return;
+        Sound.play("approve");
+        void Bridge.questionAnswer(req.requestId, answers);
+        this.finishQuestion();
+      },
+      replyInTerminal: () => {
+        const req = State.pendingQuestion;
+        if (!req) return;
+        // No answer: Claude Code asks in the terminal, and that is where to look.
+        void Bridge.approvalDecline(req.requestId);
+        this.finishQuestion();
+        const task = State.claudeTask;
+        if (task) void openSession(task);
+      },
       toggleSound: () => {
         State.settings.soundEnabled = !State.settings.soundEnabled;
         Sound.setEnabled(State.settings.soundEnabled);
@@ -361,6 +377,16 @@ export class Island {
   }
 
   /** An alert stopped waiting for an answer: let the island auto-close again. */
+  /** The question card is done, answered or handed back: Claude Code carries on. */
+  private finishQuestion() {
+    State.pendingQuestion = null;
+    State.isPinned = false;
+    this.fsm.pinned = false;
+    State.updateTask("integration_claude", "working");
+    State.setPillBadge("integration_claude", null);
+    this.setView(State.defaultView());
+  }
+
   dropPin() {
     this.fsm.pinned = false;
   }
@@ -911,7 +937,7 @@ export class Island {
     // The chat is the only view with a text field, so it is the only time the
     // island is allowed to take keyboard focus.
     if (this.lastSyncedView !== State.view) {
-      const wasChat = this.lastSyncedView === "prompt";
+      const wasChat = this.lastSyncedView === "prompt" || this.lastSyncedView === "question";
       this.lastSyncedView = State.view;
       if (State.view === "prompt") {
         void Bridge.focusWindow(true);

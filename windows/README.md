@@ -194,6 +194,13 @@ What changes on Linux:
   overview's left card opens a small editor (the changed lines in red and green with
   a few lines of context from the file, then the last command and what it printed);
   the button in its corner goes back. Nothing opens by itself.
+- **Answer Claude's questions** from the island, as on the Mac: when Claude Code asks
+  something (`AskUserQuestion`), the choices appear as chips: one click answers a single
+  choice, several questions or a multi-select use Next / Send, "Other…" takes free text, and
+  "Reply in terminal" hands the question back. Needs Claude Code 2.1.85 or newer and the
+  `--ask` hook; hooks installed before that show "Hooks outdated" in Settings with an update
+  button (you see the diff first). If Coucou is closed or can't show the question, Claude
+  Code asks in the terminal as usual.
 - **Plan usage**, as on the Mac: a small pill in the island's header ("Claude 73%", green
   below 50 %, orange up to 80 %, red above) shows your 5-hour and weekly Claude limits,
   and clicking it opens the details and reset times. Settings → Plan usage →

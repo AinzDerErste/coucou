@@ -38,6 +38,24 @@ export interface ApprovalInfo {
   command: string;
 }
 
+/** One question of an AskUserQuestion call. */
+export interface AskQuestion {
+  question: string;
+  /** A short label (12 characters at most), shown as the chip's title. */
+  header: string;
+  options: { label: string; description: string }[];
+  multiSelect: boolean;
+}
+
+/** The label picked per question text; an array of labels for a multi-select. */
+export type AskAnswers = Record<string, string | string[]>;
+
+export interface QuestionInfo {
+  requestId: string;
+  sessionId: string;
+  questions: AskQuestion[];
+}
+
 export interface ChatMessage {
   id: number;
   role: "user" | "assistant";
@@ -161,6 +179,8 @@ class AppState {
   searchResult: SearchResult | null = null;
   chatHistory: ChatMessage[] = [];
   pendingApproval: ApprovalInfo | null = null;
+  /** A question from Claude Code waiting for an answer in the island. */
+  pendingQuestion: QuestionInfo | null = null;
 
   integrations: Record<string, IntegrationInfo> = {};
 

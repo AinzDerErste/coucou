@@ -10,13 +10,15 @@
 //! * Every step runs under a deadline enforced by the main thread, so a pipe that
 //!   accepts the connection and then stops reading cannot wedge the session
 //!   either: we abandon the worker and exit.
-//! * Only `PermissionRequest` waits for an answer, because approving from the
-//!   island is the whole point. No answer means empty stdout, and Claude Code
-//!   asks in the terminal exactly as if Coucou were not installed.
+//! * Only `PermissionRequest` and a question (`--ask`) wait for an answer, because
+//!   answering from the island is the whole point. No answer means empty stdout,
+//!   and Claude Code asks in the terminal exactly as if Coucou were not installed.
 //!
 //! Usage: `coucou-hook <EventName>` (the name is also read from the JSON), or
 //! `coucou-hook --statusline` as Claude Code's status line command: it passes the
 //! plan limits on and runs the status line the user had before, so that keeps working.
+//! `coucou-hook --ask` is the `PreToolUse` hook for `AskUserQuestion`: the island
+//! shows the choices and what is picked goes back to Claude Code as the answer.
 
 use std::io::{Read, Write};
 use std::sync::mpsc;
@@ -28,6 +30,9 @@ const CONNECT_TIMEOUT: Duration = Duration::from_millis(300);
 const FIRE_AND_FORGET_BUDGET: Duration = Duration::from_secs(2);
 /// How long a permission prompt may stay on screen before the terminal takes over.
 const DECISION_BUDGET: Duration = Duration::from_secs(110);
+/// How long a question may stay on screen. The hook's own timeout in settings.json
+/// is a little longer, so we always answer (or give up) first.
+const ASK_BUDGET: Duration = Duration::from_secs(125);
 /// How long the user's own status line may take before we give up on it.
 const PREVIOUS_STATUS_LINE_BUDGET: Duration = Duration::from_secs(10);
 
@@ -57,8 +62,13 @@ fn main() {
     }
     let Some((payload, event)) = read_event() else { std::process::exit(0) };
 
-    let waits_for_answer = event == "PermissionRequest";
-    let budget = if waits_for_answer { DECISION_BUDGET } else { FIRE_AND_FORGET_BUDGET };
+    let asking = event == ASK_EVENT;
+    let waits_for_answer = event == "PermissionRequest" || asking;
+    let budget = match (asking, waits_for_answer) {
+        (true, _) => ASK_BUDGET,
+        (_, true) => DECISION_BUDGET,
+        _ => FIRE_AND_FORGET_BUDGET,
+    };
 
     // The worker owns every blocking call. If it overruns the budget we simply
     // stop listening and exit: the process dying takes the pipe handle with it.
@@ -70,7 +80,12 @@ fn main() {
     });
 
     if let Ok(Some(decision)) = rx.recv_timeout(budget) {
-        if let Some(json) = decision_json(&decision) {
+        let output = if asking {
+            ASK_INPUT.get().and_then(|input| ask_json(&decision, input))
+        } else {
+            decision_json(&decision)
+        };
+        if let Some(json) = output {
             let mut out = std::io::stdout();
             let _ = writeln!(out, "{json}");
             let _ = out.flush();
@@ -192,6 +207,34 @@ fn decision_json(decision: &str) -> Option<String> {
     ))
 }
 
+/// What the island sees a question as: not a `PreToolUse`, which it ignores for this tool.
+const ASK_EVENT: &str = "AskUserQuestion";
+
+/// The question's `tool_input` as Claude Code sent it. The payload we forward is
+/// cut short; the answer that goes back must carry the questions whole.
+static ASK_INPUT: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+
+/// The documented `PreToolUse` output that answers a question: allow the tool and
+/// hand it its input with `answers` filled in, so Claude Code does not ask again.
+/// `answer` is what the island sent, `{"answers":{"<question>":"<label>" | [labels]}}`;
+/// anything else prints nothing, and the terminal asks.
+fn ask_json(answer: &str, tool_input: &serde_json::Value) -> Option<String> {
+    let answers = serde_json::from_str::<serde_json::Value>(answer.trim()).ok()?.get("answers")?.clone();
+    if !answers.as_object().is_some_and(|a| !a.is_empty()) {
+        return None;
+    }
+    let mut input = tool_input.as_object()?.clone();
+    input.insert("answers".into(), answers);
+    Some(
+        serde_json::json!({ "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": input,
+        }})
+        .to_string(),
+    )
+}
+
 /// Reads stdin and returns the payload to forward plus the event name.
 fn read_event() -> Option<(String, String)> {
     let mut raw = Vec::new();
@@ -216,7 +259,7 @@ fn read_event() -> Option<(String, String)> {
         while let Some(arg) = it.next() {
             if arg == "--agent" {
                 agent = it.next().unwrap_or_default();
-            } else if arg_event.is_empty() {
+            } else if arg_event.is_empty() && !arg.starts_with("--") {
                 arg_event = arg;
             }
         }
@@ -232,7 +275,14 @@ fn read_event() -> Option<(String, String)> {
         .map(str::to_string)
         .filter(|s| !s.is_empty())
         .unwrap_or(arg_event);
+    // `--ask` is only ever installed for AskUserQuestion; whatever the JSON calls it, it is a question.
+    let event = if std::env::args().any(|a| a == "--ask") { ASK_EVENT.to_string() } else { event };
     map.insert("hook_event_name".into(), serde_json::Value::String(event.clone()));
+    if event == ASK_EVENT {
+        if let Some(input) = map.get("tool_input") {
+            let _ = ASK_INPUT.set(input.clone());
+        }
+    }
 
     // Claude Code's status line hands us its usage limits (5 h, weekly). That is
     // all the island wants of it, so only that goes on; without limits (API-key
@@ -420,6 +470,31 @@ mod tests {
         );
         // "always" is an island concept; Claude Code just gets an allow.
         assert!(decision_json("always").unwrap().contains(r#""behavior":"allow""#));
+    }
+
+    #[test]
+    fn an_answer_goes_back_as_the_questions_own_input_with_answers_filled_in() {
+        let input = serde_json::json!({ "questions": [{ "question": "Which?", "options": [{ "label": "A" }, { "label": "B" }], "multiSelect": false }] });
+        let out = ask_json(r#"{"answers":{"Which?":"B"}}"#, &input).unwrap();
+        let out: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let hso = &out["hookSpecificOutput"];
+        assert_eq!(hso["hookEventName"], "PreToolUse");
+        assert_eq!(hso["permissionDecision"], "allow");
+        assert_eq!(hso["updatedInput"]["answers"]["Which?"], "B");
+        // The questions go back whole.
+        assert_eq!(hso["updatedInput"]["questions"], input["questions"]);
+        // Multi-select answers are arrays.
+        assert!(ask_json(r#"{"answers":{"Which?":["A","B"]}}"#, &input).is_some());
+    }
+
+    #[test]
+    fn a_question_without_a_usable_answer_prints_nothing_so_the_terminal_asks() {
+        let input = serde_json::json!({ "questions": [] });
+        assert!(ask_json("", &input).is_none());
+        assert!(ask_json("allow", &input).is_none());
+        assert!(ask_json(r#"{"answers":{}}"#, &input).is_none());
+        assert!(ask_json(r#"{"answers":"B"}"#, &input).is_none());
+        assert!(ask_json(r#"{"answers":{"Q":"B"}}"#, &serde_json::json!("not an object")).is_none());
     }
 
     #[test]

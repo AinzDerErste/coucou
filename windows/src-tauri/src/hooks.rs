@@ -33,6 +33,12 @@ pub const HOOK_EVENTS: &[(&str, u64)] = &[
     ("SubagentStop", 10),
 ];
 
+/// `AskUserQuestion` (Claude Code 2.1.85+) comes in as a `PreToolUse`, so it gets
+/// its own entry: matched on that tool, run as `--ask`, and long enough for a human
+/// to answer. The general `PreToolUse` entry ignores that tool.
+const ASK_MATCHER: &str = "AskUserQuestion";
+const ASK_TIMEOUT: u64 = 130;
+
 /// Marker that identifies a Coucou entry inside settings.json.
 const MARKER: &str = "coucou-hook";
 
@@ -42,6 +48,8 @@ pub struct HookStatus {
     pub installed: bool,
     /// Coucou's status line relay (plan usage) is the one in settings.json.
     pub plan_relay_installed: bool,
+    /// The `--ask` hook is in: without it Claude's questions can't be answered from the island.
+    pub ask_hook_installed: bool,
     pub settings_path: String,
     pub hook_path: String,
     pub hook_ready: bool,
@@ -141,6 +149,13 @@ fn entry_is_ours(entry: &Value) -> bool {
         .unwrap_or(false)
 }
 
+/// Coucou's entry for `AskUserQuestion`.
+fn entry_is_ask(entry: &Value) -> bool {
+    entry_is_ours(entry)
+        && entry.get("matcher").and_then(Value::as_str) == Some(ASK_MATCHER)
+        && entry.to_string().contains("--ask")
+}
+
 /// The status line in settings.json is Coucou's relay (old installs wrote
 /// `coucou-hook StatusLine`, new ones `coucou-hook --statusline`; both match).
 fn status_line_is_ours(v: &Value) -> bool {
@@ -170,6 +185,16 @@ fn merged(existing: &Value) -> Value {
                 "timeout": timeout,
             }]
         }));
+        if *event == "PreToolUse" {
+            list.push(json!({
+                "matcher": ASK_MATCHER,
+                "hooks": [{
+                    "type": "command",
+                    "command": hook_command("--ask"),
+                    "timeout": ASK_TIMEOUT,
+                }]
+            }));
+        }
         hooks.insert((*event).to_string(), Value::Array(list));
     }
 
@@ -258,9 +283,14 @@ pub fn status() -> HookStatus {
                 .any(entry_is_ours)
         })
         .unwrap_or(false);
+    let ask_hook_installed = current
+        .pointer("/hooks/PreToolUse")
+        .and_then(Value::as_array)
+        .is_some_and(|list| list.iter().any(entry_is_ask));
     let hook_path = settings::hook_exe_path();
     HookStatus {
         installed,
+        ask_hook_installed,
         plan_relay_installed: plan_relay_installed(&current),
         settings_path: settings_path().to_string_lossy().to_string(),
         hook_ready: hook_path.exists(),
@@ -632,6 +662,22 @@ mod tests {
         assert_eq!(merged(&theirs)["statusLine"], theirs["statusLine"]);
         assert_eq!(without_ours(&theirs)["statusLine"], theirs["statusLine"]);
         assert!(merged(&json!({})).get("statusLine").is_none());
+    }
+
+    #[test]
+    fn questions_get_their_own_pre_tool_use_entry_that_install_and_removal_handle() {
+        let theirs = json!({ "hooks": { "PreToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "mine" }] }] } });
+        let installed = merged(&theirs);
+        let list = installed["hooks"]["PreToolUse"].as_array().unwrap();
+        // theirs, our general entry, our question entry
+        assert_eq!(list.len(), 3);
+        let ask = list.iter().find(|e| entry_is_ask(e)).unwrap();
+        assert_eq!(ask["matcher"], "AskUserQuestion");
+        assert_eq!(ask["hooks"][0]["timeout"], 130);
+        assert!(ask["hooks"][0]["command"].as_str().unwrap().ends_with(" --ask"));
+        // Installing twice does not stack them up; removing leaves only theirs.
+        assert_eq!(merged(&installed)["hooks"]["PreToolUse"].as_array().unwrap().len(), 3);
+        assert_eq!(without_ours(&installed), theirs);
     }
 
     #[test]

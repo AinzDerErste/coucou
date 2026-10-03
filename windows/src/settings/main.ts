@@ -175,10 +175,19 @@ function claudeSection(status: HookStatus): HTMLElement {
       }));
     }
 
+    // Hooks from before questions could be answered here lack the --ask entry.
+    const outdated = status.installed && !status.askHookInstalled;
+    if (outdated) {
+      body.append(h("div", {
+        class: "notice",
+        text: "Hooks outdated — update them to answer Claude's questions from the notch. You see the change before anything is written.",
+      }));
+    }
+
     const actions = h("div", { class: "row" });
     const install = h("button", {
       class: "primary",
-      text: status.installed ? "Reinstall hooks…" : "Install hooks…",
+      text: outdated ? "Update hooks…" : status.installed ? "Reinstall hooks…" : "Install hooks…",
       onclick: () => void reviewChange(body, HOOKS_CHANGE, true, redraw, () => void rebuild()),
     });
     // Writing hook commands that point at a relay which isn't there would give
@@ -551,7 +560,7 @@ async function main() {
     version = boot.version;
   }
   const status = (await Bridge.hooksStatus()) ?? {
-    installed: false, planRelayInstalled: false, settingsPath: "", hookPath: "", hookReady: false,
+    installed: false, askHookInstalled: false, planRelayInstalled: false, settingsPath: "", hookPath: "", hookReady: false,
   };
 
   const hasKey = (await Bridge.secretPresent("anthropic-api-key")) ?? false;

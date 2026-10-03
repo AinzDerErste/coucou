@@ -9,12 +9,30 @@ import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import type { Island } from "./island";
 import { beginTurn, dropSession, endTurn, hasSession, toolFinished, toolStarted } from "../views/session";
+import { parseQuestions } from "../views/question";
 import { parsePlanUsage } from "../views/usage";
 
 const CLAUDE_ID = "integration_claude";
 
 /** Clears the approval card if no decision was made before the hook gave up. */
 let pendingTimeout: number | null = null;
+/** The same for a question; the relay waits a little longer for those. */
+let questionTimeout: number | null = null;
+const QUESTION_CARD_MS = 125_000;
+
+/** The question card is over — answered in the terminal, or the hook gave up. */
+function dropQuestion(island: Island) {
+  if (questionTimeout != null) window.clearTimeout(questionTimeout);
+  questionTimeout = null;
+  if (!State.pendingQuestion) return;
+  State.pendingQuestion = null;
+  State.isPinned = false;
+  island.dropPin();
+  State.updateTask(CLAUDE_ID, "working");
+  State.setPillBadge(CLAUDE_ID, null);
+  if (State.view === "question") island.setView(State.defaultView());
+  State.notify();
+}
 
 interface HookPayload {
   hook_event_name?: string;
@@ -239,6 +257,8 @@ function handleHook(island: Island, payload: HookPayload) {
     }
 
     case "PreToolUse": {
+      // A question has its own hook (AskUserQuestion below); this one only repeats it.
+      if (payload.tool_name === "AskUserQuestion") break;
       ensurePill();
       State.updateTask(agentId, "working");
       const tool = payload.tool_name ?? "Tool";
@@ -250,6 +270,8 @@ function handleHook(island: Island, payload: HookPayload) {
     }
 
     case "PostToolUse":
+      // Answered somewhere else (in the terminal): the card would be lying.
+      if (payload.tool_name === "AskUserQuestion" && State.pendingQuestion?.sessionId === sessionId) dropQuestion(island);
       State.updateTask(agentId, "working");
       if (!isExternalAgent) {
         toolFinished(sessionId, payload.tool_name ?? "", payload.tool_input ?? {}, cwd, { tail: payload.tool_tail });
@@ -333,10 +355,16 @@ function handleHook(island: Island, payload: HookPayload) {
       }
 
       const requestId = payload.request_id ?? "";
+      // Older Claude Code asks questions this way. They are answered through the
+      // question hook, so there is no permission card; the terminal takes it.
+      if (payload.tool_name === "AskUserQuestion") {
+        if (requestId) void Bridge.approvalDecline(requestId);
+        break;
+      }
       // One card, one request. A second one must never quietly replace the first
       // — that would leave a human staring at request B while request A waits for
       // a decision nobody can give. Hand it straight back to the terminal.
-      if (State.pendingApproval && State.pendingApproval.requestId !== requestId) {
+      if (State.pendingQuestion || (State.pendingApproval && State.pendingApproval.requestId !== requestId)) {
         if (requestId) void Bridge.approvalDecline(requestId);
         break;
       }
@@ -378,6 +406,32 @@ function handleHook(island: Island, payload: HookPayload) {
         if (State.view === "approval") island.setView(State.defaultView());
         State.notify();
       }, 110_000);
+      break;
+    }
+
+    case "AskUserQuestion": {
+      const requestId = payload.request_id ?? "";
+      const questions = isExternalAgent ? null : parseQuestions(payload.tool_input);
+      // Nothing the island can show, or another card already holds the view: the
+      // terminal asks, exactly as without Coucou. One card, one request.
+      if (!questions || State.pendingApproval || (State.pendingQuestion && State.pendingQuestion.requestId !== requestId)) {
+        if (requestId) void Bridge.approvalDecline(requestId);
+        break;
+      }
+      upsert(projectName, cwd);
+      if (questionTimeout != null) window.clearTimeout(questionTimeout);
+      State.pendingQuestion = { requestId, sessionId, questions };
+      if (requestId) void Bridge.approvalAck(requestId);
+      State.updateTask(CLAUDE_ID, "question");
+      State.isPinned = true;
+      Sound.play("question");
+      if (focused) {
+        island.alert("question");
+      } else {
+        State.setPillBadge(CLAUDE_ID, "approval");
+        island.reveal();
+      }
+      questionTimeout = window.setTimeout(() => dropQuestion(island), QUESTION_CARD_MS);
       break;
     }
 

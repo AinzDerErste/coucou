@@ -10,6 +10,7 @@ import { State, type AgentTask } from "../core/state";
 import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
+import { buildQuestion } from "./question";
 import { buildSession, hasSession } from "./session";
 import { PlanCard, buildPlanPill, planPillVisible } from "./usage";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
@@ -24,6 +25,10 @@ export interface ViewActions {
   openTarget(): void;
   openUrl(url: string): void;
   decide(d: "allow" | "deny"): void;
+  /** The answers to Claude Code's question (one value per question text). */
+  answerQuestion(answers: Record<string, string | string[]>): void;
+  /** Hand the question back: Claude Code asks it in the terminal. */
+  replyInTerminal(): void;
   toggleSound(): void;
   setVolume(v: number): void;
   setAutoClose(seconds: number): void;
@@ -345,26 +350,6 @@ function buildApproval(actions: ViewActions): ViewHost {
   };
 }
 
-// ── Question ──────────────────────────────────────────────────────────────────
-
-function buildQuestion(): ViewHost {
-  const who = h("div");
-  const title = h("div", { class: "title" });
-  const row = h("div", { class: "actions" });
-  const el = h("div", { class: "view" }, card("cyan", stack(116, 16, who, title, row)));
-  return {
-    el,
-    sync() {
-      clear(who);
-      who.append(agentWho(State.focusTask, "Claude Code is asking a question"));
-      const task = State.focusTask;
-      title.textContent = task?.steps.at(-1) ?? "Claude needs an answer.";
-      clear(row);
-      row.append(h("div", { class: "sub", text: "Answer in your terminal — Coucou can't reply for you yet." }));
-    },
-  };
-}
-
 // ── Error ─────────────────────────────────────────────────────────────────────
 
 function buildError(actions: ViewActions): ViewHost {
@@ -528,7 +513,7 @@ export function buildViews(
   map.set("session", buildSession(actions));
   map.set("empty", buildEmpty(actions));
   map.set("approval", buildApproval(actions));
-  map.set("question", buildQuestion());
+  map.set("question", buildQuestion(actions));
   map.set("error", buildError(actions));
   map.set("finished", buildFinished(actions));
   map.set("confused", buildConfused());
