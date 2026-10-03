@@ -6,6 +6,7 @@ mod files;
 mod hooks;
 mod integrations;
 mod island;
+mod local_chat;
 mod log;
 mod pipe;
 mod platform;
@@ -314,16 +315,43 @@ fn approval_decline(app: AppHandle, request_id: String) {
 /// One chat turn. The API key and any file bytes stay on the Rust side.
 #[tauri::command]
 async fn chat_send(
+    app: AppHandle,
     shared: State<'_, Shared>,
     chat: State<'_, Chat>,
     query: String,
     context: Option<ChatContext>,
 ) -> Result<ChatReply, String> {
-    let (model, language) = {
-        let s = shared.settings.lock().unwrap();
-        (s.model.clone(), s.language.clone())
+    let s = shared.settings.lock().unwrap().clone();
+    let key = secrets::get(CUSTOM_KEY);
+    match s.chat_provider.as_str() {
+        "ollama" => local_chat::send(&app, &chat, &s.ollama_url, None, &s.ollama_model, &s.language, query, context).await,
+        "lmstudio" => local_chat::send(&app, &chat, &s.lmstudio_url, None, &s.lmstudio_model, &s.language, query, context).await,
+        "custom" => local_chat::send(&app, &chat, &s.custom_url, key.as_deref(), &s.custom_model, &s.language, query, context).await,
+        _ => claude::send(&chat, &s.model, &s.language, query, context).await,
+    }
+}
+
+/// Keychain entry of the key of the user's own OpenAI-compatible server.
+const CUSTOM_KEY: &str = "openai-compatible-key";
+
+#[cfg(test)]
+#[test]
+fn the_openai_compatible_key_may_be_stored() {
+    // secrets.rs refuses anything outside its list ("unknown key").
+    assert!(secrets::KNOWN_KEYS.contains(&CUSTOM_KEY));
+}
+
+/// Settings → Local models → Connect: does the server answer, and which models does it have?
+/// `provider` picks the usual address for an empty field.
+#[tauri::command]
+async fn local_connect(provider: String, url: String) -> Result<local_chat::Server, String> {
+    // An OpenAI-compatible server has no usual address; the others do, and take no key.
+    let (usual, key) = match provider.as_str() {
+        "lmstudio" => ("http://127.0.0.1:1234", None),
+        "custom" => ("", secrets::get(CUSTOM_KEY)),
+        _ => ("http://127.0.0.1:11434", None),
     };
-    claude::send(&chat, &model, &language, query, context).await
+    local_chat::connect(&url, usual, key.as_deref()).await
 }
 
 #[tauri::command]
@@ -479,6 +507,7 @@ pub fn run() {
             approval_decline,
             log_line,
             chat_send,
+            local_connect,
             chat_reset,
             ingest_file,
             secret_present,

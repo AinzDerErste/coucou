@@ -194,6 +194,15 @@ What changes on Linux:
   overview's left card opens a small editor (the changed lines in red and green with
   a few lines of context from the file, then the last command and what it printed);
   the button in its corner goes back. Nothing opens by itself.
+- **Local models and Markdown in the chat**, as on the Mac: Settings → Local models connects
+  Ollama or LM Studio (empty address = the usual one on this machine) or any server that
+  speaks the OpenAI API, such as Unsloth (address, optional key kept in the keychain), and
+  "Chat with" switches the chat to it. No key is needed for Ollama and LM Studio. Answers
+  stream in as they are written, `<think>` blocks of reasoning models stay hidden, and a
+  text file you dropped goes along inline (24 000 characters at most; images and PDFs by name
+  only). Answers from every provider are shown with Markdown: headings, lists, bold, inline
+  code, links (http/https only), quotes, and code blocks with a copy button. Unlike the Mac
+  build, the chat does not offer Gemini or OpenAI cloud models.
 - **Answer Claude's questions** from the island, as on the Mac: when Claude Code asks
   something (`AskUserQuestion`), the choices appear as chips: one click answers a single
   choice, several questions or a multi-select use Next / Send, "Other…" takes free text, and

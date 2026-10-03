@@ -49,7 +49,7 @@ pub(crate) fn system_prompt(language: &str) -> String {
         "You are Mochi, a personal AI assistant living at the top of the user's screen. \
 You have web search access and can help with absolutely anything — research, coding, finding places, recommendations, tasks, questions. \
 {respond} Be thorough and complete — use as much detail as the task requires. \
-No markdown formatting (no **, no ##, no bullet dashes). Use plain text with line breaks."
+Use light Markdown when it helps: short paragraphs, bullet lists, **bold**, `inline code` and fenced code blocks. Avoid tables and big headings: the chat window is small."
     )
 }
 
@@ -60,12 +60,16 @@ pub struct Chat {
     /// Claude Code session of this conversation, when it runs without an API key
     /// (see claude_cli.rs).
     pub(crate) cli_session: Mutex<Option<String>>,
+    /// The conversation with a local model (see local_chat.rs), in the plain
+    /// OpenAI shape a local server understands.
+    pub(crate) local: Mutex<Vec<Value>>,
 }
 
 impl Chat {
     pub fn reset(&self) {
         self.messages.lock().unwrap().clear();
         *self.cli_session.lock().unwrap() = None;
+        self.local.lock().unwrap().clear();
     }
 
     fn is_empty(&self) -> bool {

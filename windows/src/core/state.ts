@@ -123,6 +123,16 @@ export interface Settings {
   model: string;
   /** "auto" (system language), "en", "de" or "fr". */
   language: string;
+  /** Who the chat talks to: Claude, or a model server on this machine. */
+  chatProvider: "anthropic" | "ollama" | "lmstudio" | "custom";
+  /** Addresses of the local servers once connected (empty: not connected) and the model picked on each. */
+  ollamaUrl: string;
+  lmstudioUrl: string;
+  ollamaModel: string;
+  lmstudioModel: string;
+  /** Any other OpenAI-compatible server (its key, if any, is in the keychain). */
+  customUrl: string;
+  customModel: string;
   /** Show the plan usage pill (5 h and weekly limits) in the island's header. */
   showPlanInNotch: boolean;
   /** Coucou's status line relay is installed in Claude Code's settings. */
@@ -142,6 +152,13 @@ export const DEFAULT_SETTINGS: Settings = {
   hooksInstalled: false,
   model: "claude-opus-5",
   language: "auto",
+  chatProvider: "anthropic",
+  ollamaUrl: "",
+  lmstudioUrl: "",
+  ollamaModel: "",
+  lmstudioModel: "",
+  customUrl: "",
+  customModel: "",
   showPlanInNotch: false,
   planRelayInstalled: false,
 };

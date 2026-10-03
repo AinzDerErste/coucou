@@ -364,6 +364,153 @@ function apiSection(hasKey: boolean): HTMLElement {
   );
 }
 
+// ── Local models section ──────────────────────────────────────────────────────
+
+type Local = "ollama" | "lmstudio" | "custom";
+
+const LOCAL: Record<Local, { name: string; url: "ollamaUrl" | "lmstudioUrl" | "customUrl"; model: "ollamaModel" | "lmstudioModel" | "customModel"; usual: string }> = {
+  ollama: { name: "Ollama", url: "ollamaUrl", model: "ollamaModel", usual: "http://127.0.0.1:11434" },
+  lmstudio: { name: "LM Studio", url: "lmstudioUrl", model: "lmstudioModel", usual: "http://127.0.0.1:1234" },
+  // No usual address: any server that speaks the OpenAI API (Unsloth, vLLM, llama.cpp…).
+  custom: { name: "OpenAI-compatible", url: "customUrl", model: "customModel", usual: "" },
+};
+
+/** Keychain entry of the OpenAI-compatible server's key. */
+const CUSTOM_KEY = "openai-compatible-key";
+
+/**
+ * Chat with a model on this computer through Ollama or LM Studio: connecting
+ * checks that the server answers and lists its models. No key; the address is
+ * the only place Coucou talks to, and it stays on this machine by default.
+ */
+function localSection(): HTMLElement {
+  const body = h("div", { style: "display:flex;flex-direction:column;gap:12px" });
+  const section = h("section", {}, h("h2", {}, h("span", { text: "Local models" })), body);
+  const redraw = () => {
+    clear(body);
+    draw();
+  };
+
+  /** Who the chat talks to: Claude, or any server that is connected. */
+  function providerRow(): HTMLElement {
+    const pick = h("select", {}, h("option", { value: "anthropic", text: "Claude" })) as HTMLSelectElement;
+    for (const [id, def] of Object.entries(LOCAL) as [Local, (typeof LOCAL)[Local]][]) {
+      if (settings[def.url]) pick.append(h("option", { value: id, text: def.name }));
+    }
+    pick.value = [...pick.options].some((o) => o.value === settings.chatProvider) ? settings.chatProvider : "anthropic";
+    pick.addEventListener("change", () => {
+      settings.chatProvider = pick.value as Settings["chatProvider"];
+      void save();
+    });
+    return h("div", { class: "row" }, h("label", { text: "Chat with" }), pick);
+  }
+
+  function serverBlock(id: Local): HTMLElement {
+    const def = LOCAL[id];
+    const connected = settings[def.url] !== "";
+    const input = h("input", {
+      type: "text",
+      placeholder: def.usual || "http://127.0.0.1:8000",
+      value: settings[def.url],
+      style: "flex:1 1 auto;min-width:0",
+      spellcheck: "false",
+    }) as HTMLInputElement;
+    const status = h("div", { class: "hint" });
+    const row = h("div", { class: "row" }, h("label", { text: def.name }), input);
+    // An OpenAI-compatible server may want a key; it goes to the keychain, never to the settings file.
+    const key = h("input", {
+      type: "password",
+      placeholder: "API key (optional)",
+      style: "flex:1 1 auto;min-width:0",
+      autocomplete: "off",
+      spellcheck: "false",
+    }) as HTMLInputElement;
+    const keyRow = id === "custom" && !connected ? h("div", { class: "row" }, h("label", { text: "Key" }), key) : null;
+
+    if (connected) {
+      input.disabled = true;
+      const models = h("select", {}, h("option", { value: settings[def.model], text: settings[def.model] })) as HTMLSelectElement;
+      models.addEventListener("change", () => {
+        settings[def.model] = models.value;
+        void save();
+      });
+      row.append(
+        models,
+        h("button", {
+          class: "danger",
+          text: "Disconnect",
+          onclick: () => {
+            settings[def.url] = "";
+            settings[def.model] = "";
+            if (settings.chatProvider === id) settings.chatProvider = "anthropic";
+            if (id === "custom") void Bridge.secretClear(CUSTOM_KEY).catch(() => {});
+            void save().then(redraw);
+          },
+        }),
+      );
+      // The list is asked for again each time, so it is never older than the server.
+      Bridge.localConnect(id, settings[def.url]).then(
+        (server) => {
+          if (!server.models.length) return;
+          models.replaceChildren(...server.models.map((m) => h("option", { value: m, text: m })));
+          if (!server.models.includes(settings[def.model])) {
+            settings[def.model] = server.models[0];
+            void save();
+          }
+          models.value = settings[def.model];
+        },
+        (err) => { status.textContent = String(err).replace(/^Error:\s*/, ""); },
+      );
+    } else {
+      const connect = h("button", { class: "primary", text: "Connect" });
+      connect.addEventListener("click", async () => {
+        connect.disabled = true;
+        status.className = "hint";
+        status.textContent = "Connecting…";
+        try {
+          if (id === "custom" && key.value.trim()) {
+            await Bridge.secretSet(CUSTOM_KEY, key.value.trim());
+            key.value = "";
+          }
+          const server = await Bridge.localConnect(id, input.value);
+          if (!server.models.length) {
+            status.className = "notice err";
+            status.textContent = `No models yet. Download one in ${def.name} first.`;
+          } else {
+            settings[def.url] = server.url;
+            settings[def.model] = server.models[0];
+            await save();
+            redraw();
+            return;
+          }
+        } catch (err) {
+          status.className = "notice err";
+          status.textContent = String(err).replace(/^Error:\s*/, "");
+        }
+        connect.disabled = false;
+      });
+      row.append(connect);
+    }
+    return h("div", { style: "display:flex;flex-direction:column;gap:6px" }, row, keyRow, status);
+  }
+
+  function draw() {
+    body.append(
+      h("div", {
+        class: "hint",
+        text: "Chat with a model running on this computer through Ollama or LM Studio (leave the address empty for the usual one), or with any server that speaks the OpenAI API, such as Unsloth. If you point an address at another machine, that machine receives what you ask.",
+      }),
+      serverBlock("ollama"),
+      serverBlock("lmstudio"),
+      serverBlock("custom"),
+      providerRow(),
+    );
+  }
+
+  draw();
+  return section;
+}
+
 // ── Integrations section ──────────────────────────────────────────────────────
 
 interface IntegrationDef {
@@ -578,6 +725,7 @@ async function main() {
     claudeSection(status),
     planSection(status),
     apiSection(hasKey),
+    localSection(),
     integrationsSection(present),
     generalSection(),
     h("div", {

@@ -848,6 +848,126 @@ input[type="range"]::-webkit-slider-thumb {
   user-select: text;
 }
 
+/* ── Markdown in the answers ─────────────────────────────────────────────── */
+
+.reply {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.md-p {
+  font: 400 12.5px var(--font);
+  color: #b0b5be;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.md-h {
+  font: 600 13px var(--font);
+  color: #f1f2f4;
+  overflow-wrap: anywhere;
+}
+
+.md-h1 {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.md-p strong {
+  color: #e8e9ec;
+  font-weight: 600;
+}
+
+.md-code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  font: 400 11.5px var(--mono);
+  color: #c8cdd4;
+}
+
+.md-link {
+  color: #60a5fa;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.md-pre {
+  position: relative;
+  padding: 10px 32px 10px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: #0d0e12;
+}
+
+.md-pre pre {
+  margin: 0;
+  font: 400 11px var(--mono);
+  color: #c8cdd4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.md-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #6b7079;
+  cursor: default;
+}
+
+.md-copy.done {
+  color: #22c55e;
+}
+
+.md-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.md-bullet {
+  flex: 0 0 auto;
+  min-width: 10px;
+  font: 400 12.5px var(--font);
+  color: #6b7079;
+}
+
+.md-quote {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.md-quote i {
+  flex: 0 0 2px;
+  align-self: stretch;
+  border-radius: 1px;
+  background: #4b5563;
+}
+
+.md-quote .md-p {
+  color: #8a8f98;
+}
+
+.md-rule {
+  width: 100%;
+  margin: 2px 0;
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.3);
+  opacity: 0.3;
+}
+
 .typing {
   display: flex;
   gap: 4px;
