@@ -11,6 +11,7 @@ import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
 import { buildSession, hasSession } from "./session";
+import { PlanCard, buildPlanPill, planPillVisible } from "./usage";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations";
 
@@ -84,6 +85,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
   const tabChat = h("button", { class: "tab", title: "Ask", onclick: () => go("prompt") }, fa("comment", 15));
   const tabDrop = h("button", { class: "tab", title: "Drop", onclick: () => go("upload") }, fa("plus", 14));
 
+  const planPill = buildPlanPill();
   const gearBtn = h("button", { title: "Settings", onclick: () => go("settings") }, fa("gear", 16));
   const soundBtn = h("button", { title: "Mute", onclick: () => actions.toggleSound() }, fa("volumeHigh", 16));
 
@@ -96,7 +98,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
     "div",
     { id: "header" },
     h("div", { class: "tabs" }, tabHome, tabChat, tabDrop),
-    h("div", { class: "header-actions" }, gearBtn, soundBtn),
+    h("div", { class: "header-actions" }, planPill.el, gearBtn, soundBtn),
   );
 
   return {
@@ -111,6 +113,9 @@ export function buildHeader(actions: ViewActions): ViewHost {
       gearBtn.append(fa("gear", 16));
       clear(soundBtn);
       soundBtn.append(fa(State.settings.soundEnabled ? "volumeHigh" : "volumeXmark", 16));
+      const pillOn = planPillVisible();
+      planPill.el.style.display = pillOn ? "" : "none";
+      if (pillOn) planPill.sync();
       el.style.opacity = v === "confused" ? "0" : "1";
     },
   };
@@ -137,6 +142,8 @@ function buildOverview(actions: ViewActions): ViewHost {
   });
   const pills = h("div", { class: "pills" });
   const right = card(null, pills);
+  // Opened from the plan pill in the header: stands in for the left card.
+  const plan = new PlanCard();
 
   const el = h("div", { class: "view overview" },
     h("div", { class: "left" }, left),
@@ -146,7 +153,7 @@ function buildOverview(actions: ViewActions): ViewHost {
   let pillIds = "";
   let detailOpen = false;
   let lastFocus: string | null = null;
-  let mode: "ticker" | "card" | null = null;
+  let mode: "ticker" | "card" | "plan" | null = null;
   let cardKey = "";
 
   const hooks: IntegrationCardHooks = {
@@ -170,6 +177,7 @@ function buildOverview(actions: ViewActions): ViewHost {
     el,
     tick(nowMs: number) {
       if (mode === "ticker") ticker.tick(nowMs);
+      if (mode === "plan") plan.sync();
     },
     sync() {
       const task = State.focusTask;
@@ -185,7 +193,18 @@ function buildOverview(actions: ViewActions): ViewHost {
       const sessionActive =
         task?.id === "integration_claude" && (task.state !== "idle" || task.steps.length > 0);
 
-      if (task && sessionActive) {
+      const planOpen = State.showingPlanDetail && planPillVisible();
+      if (mode === "plan" && !planOpen) mode = null;
+
+      if (planOpen) {
+        if (mode !== "plan") {
+          clear(leftBody);
+          leftBody.append(plan.el);
+          mode = "plan";
+          cardKey = "";
+        }
+        plan.sync();
+      } else if (task && sessionActive) {
         if (mode !== "ticker") {
           clear(leftBody);
           leftBody.append(tickerBody);
@@ -220,7 +239,7 @@ function buildOverview(actions: ViewActions): ViewHost {
         }
       }
 
-      jump.style.display = detailOpen ? "none" : "";
+      jump.style.display = detailOpen || mode === "plan" ? "none" : "";
       left.classList.toggle("expandable", mode === "ticker" && hasSession());
 
       const others = State.otherTasks.slice(0, 4);

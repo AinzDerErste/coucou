@@ -2,6 +2,7 @@
 
 import type { BotEmoteName, BotStateName, IslandMode, IslandViewName } from "./layout";
 import type { EyeShape } from "../mochi/engine";
+import type { PlanUsage } from "../views/usage";
 
 export type AgentSource = "claudeCode" | "n8n" | "agent";
 export type PillBadge = "approval" | "finished" | "error";
@@ -104,6 +105,10 @@ export interface Settings {
   model: string;
   /** "auto" (system language), "en", "de" or "fr". */
   language: string;
+  /** Show the plan usage pill (5 h and weekly limits) in the island's header. */
+  showPlanInNotch: boolean;
+  /** Coucou's status line relay is installed in Claude Code's settings. */
+  planRelayInstalled: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -119,6 +124,8 @@ export const DEFAULT_SETTINGS: Settings = {
   hooksInstalled: false,
   model: "claude-opus-5",
   language: "auto",
+  showPlanInNotch: false,
+  planRelayInstalled: false,
 };
 
 type Listener = () => void;
@@ -143,6 +150,10 @@ class AppState {
   uploadProgress = 0;
   uploadDuration = 2.4;
   fileDragOver = false;
+  /** Claude's 5 h / weekly limits, from the status line (null until the first call). */
+  planUsage: PlanUsage | null = null;
+  /** The plan card is open in place of the overview's left card. */
+  showingPlanDetail = false;
 
   promptContext: PromptContext | null = null;
   droppedFile: { name: string; path: string } | null = null;
@@ -190,6 +201,7 @@ class AppState {
     const t = this.tasks.find((x) => x.id === id);
     if (!t) return;
     this.focusId = id;
+    this.showingPlanDetail = false;
     t.pillBadge = null;
     this.notify();
   }

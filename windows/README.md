@@ -194,6 +194,13 @@ What changes on Linux:
   overview's left card opens a small editor (the changed lines in red and green with
   a few lines of context from the file, then the last command and what it printed);
   the button in its corner goes back. Nothing opens by itself.
+- **Plan usage**, as on the Mac: a small pill in the island's header ("Claude 73%", green
+  below 50 %, orange up to 80 %, red above) shows your 5-hour and weekly Claude limits,
+  and clicking it opens the details and reset times. Settings → Plan usage →
+  **Show in the notch** turns it on and installs a status line relay after showing you the
+  diff of `~/.claude/settings.json`; a status line you already have keeps working (the relay
+  runs it) and **Uninstall relay** puts it back. Pro and Max plans only, and the numbers
+  arrive with Claude Code's replies.
 - **Open terminal** jumps to the Konsole tab the session runs in: the relay passes
   Konsole's D-Bus names, the app switches the tab over D-Bus and asks KWin (a
   short script, via `gdbus`) to raise that window. In any other terminal it opens

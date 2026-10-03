@@ -9,6 +9,7 @@ import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import type { Island } from "./island";
 import { beginTurn, dropSession, endTurn, hasSession, toolFinished, toolStarted } from "../views/session";
+import { parsePlanUsage } from "../views/usage";
 
 const CLAUDE_ID = "integration_claude";
 
@@ -35,6 +36,8 @@ interface HookPayload {
   tool_tail?: string[];
   /** PostToolUseFailure: why the tool failed. */
   error?: string;
+  /** StatusLine: Claude Code's usage limits. */
+  rate_limits?: unknown;
 }
 
 /** Same rule as HookServer.validateAgent on macOS. "claude" is reserved. */
@@ -160,6 +163,16 @@ function noteTerminal(payload: HookPayload) {
 }
 
 function handleHook(island: Island, payload: HookPayload) {
+  // Account-wide numbers, not part of any session: just keep the latest.
+  if (payload.hook_event_name === "StatusLine") {
+    const usage = parsePlanUsage(payload.rate_limits);
+    if (usage) {
+      State.planUsage = usage;
+      State.notify();
+    }
+    return;
+  }
+
   if (State.paused) {
     // Silence here used to cost Claude Code nearly two minutes: the relay waited
     // for a decision from an island that had already decided not to look. Say so,

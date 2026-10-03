@@ -1675,6 +1675,129 @@ input[type="range"]::-webkit-slider-thumb {
 .tok-f { color: #f2c070; }
 .tok-c { color: var(--dim-4); font-style: italic; }
 
+/* ── Plan usage: the pill in the header and the card behind it ─────────────── */
+
+.header-actions {
+  align-items: center;
+}
+
+.plan-pill {
+  --plan: #6b7079;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--plan) 14%, transparent);
+  border-radius: 999px;
+  background: #0e0f11;
+  color: var(--dim-3);
+  font: 600 10px var(--font);
+  white-space: nowrap;
+  cursor: default;
+  transition: background 0.18s, border-color 0.18s, color 0.18s;
+}
+
+.plan-pill:hover,
+.plan-pill.active {
+  background: color-mix(in srgb, var(--plan) 18%, transparent);
+  border-color: color-mix(in srgb, var(--plan) 55%, transparent);
+  color: color-mix(in srgb, var(--plan) 70%, white);
+}
+
+.plan-pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.plan-card {
+  position: relative;
+  z-index: 1;
+  padding-top: 10px;
+}
+
+.plan-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 36px 0 108px;
+  white-space: nowrap;
+}
+
+.plan-head > * {
+  flex: 0 0 auto;
+}
+
+.plan-title {
+  font: 600 12px var(--font);
+  color: var(--ink);
+}
+
+.plan-sub {
+  flex: 0 1 auto !important; /* the one part that gives way, with an ellipsis */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font: 400 11px var(--font);
+  color: var(--dim-2);
+}
+
+.plan-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 12px 0 108px;
+}
+
+.plan-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font: 400 11px var(--font);
+  white-space: nowrap;
+}
+
+.plan-label {
+  flex: 0 0 40px;
+  color: var(--dim-3);
+}
+
+.plan-bar {
+  flex: 0 0 50px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.plan-fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+}
+
+.plan-pct {
+  flex: 0 0 30px;
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #c5c8cd;
+}
+
+.plan-reset-icon {
+  display: inline-flex;
+  color: var(--dim-3);
+}
+
+.plan-reset {
+  font-size: 10px;
+  color: var(--dim-3);
+}
+
+.plan-none {
+  color: var(--dim-3);
+}
+
 /* The overview's left card opens the code view when there is code to show. */
 .expand-hint {
   position: absolute;
